@@ -1,0 +1,13 @@
+# 编译产物
+*.amxx
+*.zip
+
+# 二进制
+amxxpc
+amxxpc32.so
+amxxpc32_64.so
+amxxpc64
+
+# 临时文件
+*.new
+*_patched.*

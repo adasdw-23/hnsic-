@@ -1,0 +1,4 @@
+
+[zh]
+LANG_NAME = Simplified Chinese (zh)
+LANG_NAME_NATIVE = 简体中文
