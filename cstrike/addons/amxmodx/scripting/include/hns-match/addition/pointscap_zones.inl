@@ -535,39 +535,55 @@ public cmdDelZone(id) {
 		return PLUGIN_HANDLED;
 	}
 
-	new szArg[4];
+	new szArg[4], szTypeArg[8];
 	read_argv(1, szArg, charsmax(szArg));
+	read_argv(2, szTypeArg, charsmax(szTypeArg));
 	if (!szArg[0]) {
-		client_print(id, print_chat, "[PointScap] 用法: /delzone <A-Z>");
+		client_print(id, print_chat, "[PointScap] 用法: /delzone <A-Z> [3|4|5]");
 		return PLUGIN_HANDLED;
 	}
 
 	new iLabel = szArg[0] - 'A';
-	new iDeleteIndex = -1;
-	for (new i = 0; i < g_iZoneCount; i++) {
-		if (g_eZones[i][ZONE_LABEL] == iLabel) {
-			iDeleteIndex = i;
-			break;
-		}
-	}
-	if (iDeleteIndex == -1) {
-		client_print(id, print_chat, "[PointScap] 未找到点位 %c.", szArg[0]);
+	new iType = szTypeArg[0] ? str_to_num(szTypeArg) : 0;
+	if (iType && (iType < 3 || iType > 5)) {
+		client_print(id, print_chat, "[PointScap] 类型只支持 3 / 4 / 5.");
 		return PLUGIN_HANDLED;
 	}
 
-	// 删除：将后面的区域前移，并同步更新标签
-	for (new i = iDeleteIndex; i < g_iZoneCount - 1; i++) {
-		g_eZones[i] = g_eZones[i + 1];
-		g_eZones[i][ZONE_LABEL] = i;  // ★ 同步标签
+	new iDeletedCount;
+	for (new i = 0; i < g_iZoneCount; ) {
+		new bool:bMatchLabel = (g_eZones[i][ZONE_LABEL] == iLabel);
+		new bool:bMatchType = (!iType || g_eZones[i][ZONE_TYPE] == iType);
+		if (bMatchLabel && bMatchType) {
+			for (new j = i; j < g_iZoneCount - 1; j++) {
+				g_eZones[j] = g_eZones[j + 1];
+			}
+			g_iZoneCount--;
+			iDeletedCount++;
+			continue;
+		}
+		i++;
 	}
-	g_iZoneCount--;
+
+	if (!iDeletedCount) {
+		if (iType) {
+			client_print(id, print_chat, "[PointScap] 未找到点位 %c 的 %d人类型.", szArg[0], iType);
+		} else {
+			client_print(id, print_chat, "[PointScap] 未找到点位 %c.", szArg[0]);
+		}
+		return PLUGIN_HANDLED;
+	}
 
 	new szPath[256], szMapName[32];
 	_get_zone_ini_path(szPath, charsmax(szPath));
 	get_mapname(szMapName, charsmax(szMapName));
 	_save_zones_ini(szPath, szMapName);
 
-	client_print(id, print_chat, "[PointScap] 点位 %c 已删除. 剩余 %d 个点位.", szArg[0], g_iZoneCount);
+	if (iType) {
+		client_print(id, print_chat, "[PointScap] 点位 %c 的 %d人类型已删除. 剩余 %d 个点位.", szArg[0], iType, g_iZoneCount);
+	} else {
+		client_print(id, print_chat, "[PointScap] 点位 %c 相关类型共删除 %d 个. 剩余 %d 个点位.", szArg[0], iDeletedCount, g_iZoneCount);
+	}
 	client_print(id, print_chat, "[PointScap] 点位文件已自动更新.");
 
 	return PLUGIN_HANDLED;
