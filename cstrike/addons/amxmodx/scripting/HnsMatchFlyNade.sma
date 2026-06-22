@@ -112,7 +112,10 @@ public fw_PlayerKilled(victim) {
 public Event_DeathMsg() {
     new victim = read_data(2);
     CleanupFlyNade(victim);
-    // Don't check here - check after new round starts
+
+    if (g_bFlyNadeEnabled) {
+        set_task(0.2, "CheckLastCT");
+    }
 }
 
 public Event_NewRound() {

@@ -36,6 +36,51 @@ stock bool:_pointscap_append_zone(iZoneLabel, iZoneType, Float:fMins[3], Float:f
 	return true;
 }
 
+stock Float:pointscap_get_zone_score(zoneId) {
+	new Float:flScore = g_eZones[zoneId][ZONE_SCORE];
+	if (flScore > 0.0) {
+		return flScore;
+	}
+
+	switch (g_eZones[zoneId][ZONE_TYPE]) {
+		case 6, 5: return g_flPointScapScore5;
+		case 4: return g_flPointScapScore4;
+	}
+
+	return g_flPointScapScore3;
+}
+
+stock pointscap_set_default_bounds(iType, Float:fOrigin[3], Float:fMins[3], Float:fMaxs[3]) {
+	new Float:flHalfXY;
+	new Float:flDown;
+	new Float:flUp;
+
+	switch (iType) {
+		case 5: {
+			flHalfXY = 38.0;
+			flDown = 8.0;
+			flUp = 68.0;
+		}
+		case 4: {
+			flHalfXY = 52.0;
+			flDown = 10.0;
+			flUp = 78.0;
+		}
+		default: {
+			flHalfXY = 68.0;
+			flDown = 12.0;
+			flUp = 88.0;
+		}
+	}
+
+	fMins[0] = fOrigin[0] - flHalfXY;
+	fMins[1] = fOrigin[1] - flHalfXY;
+	fMins[2] = fOrigin[2] - flDown;
+	fMaxs[0] = fOrigin[0] + flHalfXY;
+	fMaxs[1] = fOrigin[1] + flHalfXY;
+	fMaxs[2] = fOrigin[2] + flUp;
+}
+
 // ============================================
 // 加载点位配置 - NOT stock，确保一定被编译
 // ============================================
@@ -326,15 +371,18 @@ _pointscap_auto_generate(szMapName[]) {
 			if (spawns[idx][2] > maxZ) maxZ = spawns[idx][2];
 		}
 
-		minX -= 120.0; minY -= 120.0; minZ -= 80.0;
-		maxX += 120.0; maxY += 120.0; maxZ += 80.0;
+		minX -= 70.0; minY -= 70.0; minZ -= 15.0;
+		maxX += 70.0; maxY += 70.0; maxZ += 90.0;
 
 		// 写入 g_eZones (内存)
 		g_eZones[c][ZONE_ENABLED] = 1;
 		g_eZones[c][ZONE_LABEL] = c;
 		g_eZones[c][ZONE_STATUS] = 0;
 		g_eZones[c][ZONE_TYPE] = 3;
+		g_eZones[c][ZONE_SCORE] = g_flPointScapScore3;
+		g_eZones[c][ZONE_CAPTURED] = 0;
 		g_eZones[c][ZONE_CAPTURE_TIME] = 0.0;
+		g_eZones[c][ZONE_CAPTURED_TYPE] = 0;
 		g_eZones[c][ZONE_PLAYER_COUNT] = 0;
 		g_eZones[c][ZONE_MINS][0] = minX;
 		g_eZones[c][ZONE_MINS][1] = minY;
@@ -446,28 +494,25 @@ public cmdCreatZone(id) {
 	new Float:fOrigin[3];
 	pev(id, pev_origin, fOrigin);
 	
-	// ★ 固定高度：脚底向下30，向上210（约3个玩家身高），不再依赖 crouch/stand 状态
-	// XY各扩120，确保玩家在区域内移动时不会被边界卡住
-	new Float:minX = fOrigin[0] - 120.0;
-	new Float:minY = fOrigin[1] - 120.0;
-	new Float:minZ = fOrigin[2] - 30.0;
-	new Float:maxX = fOrigin[0] + 120.0;
-	new Float:maxY = fOrigin[1] + 120.0;
-	new Float:maxZ = fOrigin[2] + 210.0;
+	new Float:fMins[3], Float:fMaxs[3];
+	pointscap_set_default_bounds(iType, fOrigin, fMins, fMaxs);
 
 	new i = g_iZoneCount;
 	g_eZones[i][ZONE_ENABLED] = 1;
 	g_eZones[i][ZONE_LABEL] = i;
 	g_eZones[i][ZONE_STATUS] = 0;
 	g_eZones[i][ZONE_TYPE] = iType;
+	g_eZones[i][ZONE_SCORE] = (iType == 5) ? g_flPointScapScore5 : ((iType == 4) ? g_flPointScapScore4 : g_flPointScapScore3);
+	g_eZones[i][ZONE_CAPTURED] = 0;
 	g_eZones[i][ZONE_CAPTURE_TIME] = 0.0;
+	g_eZones[i][ZONE_CAPTURED_TYPE] = 0;
 	g_eZones[i][ZONE_PLAYER_COUNT] = 0;
-	g_eZones[i][ZONE_MINS][0] = minX;
-	g_eZones[i][ZONE_MINS][1] = minY;
-	g_eZones[i][ZONE_MINS][2] = minZ;
-	g_eZones[i][ZONE_MAXS][0] = maxX;
-	g_eZones[i][ZONE_MAXS][1] = maxY;
-	g_eZones[i][ZONE_MAXS][2] = maxZ;
+	g_eZones[i][ZONE_MINS][0] = fMins[0];
+	g_eZones[i][ZONE_MINS][1] = fMins[1];
+	g_eZones[i][ZONE_MINS][2] = fMins[2];
+	g_eZones[i][ZONE_MAXS][0] = fMaxs[0];
+	g_eZones[i][ZONE_MAXS][1] = fMaxs[1];
+	g_eZones[i][ZONE_MAXS][2] = fMaxs[2];
 	g_iZoneCount++;
 
 	new szPath[256], szMapName[32];
@@ -477,7 +522,8 @@ public cmdCreatZone(id) {
 
 	client_print(id, print_chat, "[PointScap] 点位 %c 已创建! 类型=%d人, 坐标=(%.0f,%.0f,%.0f)", 
 		'A' + i, iType, fOrigin[0], fOrigin[1], fOrigin[2]);
-	client_print(id, print_chat, "[PointScap] 区域大小: 240x240x240, 已自动保存.");
+	client_print(id, print_chat, "[PointScap] 判定框: %.0fx%.0fx%.0f, 已自动保存.",
+		fMaxs[0] - fMins[0], fMaxs[1] - fMins[1], fMaxs[2] - fMins[2]);
 
 	return PLUGIN_HANDLED;
 }
