@@ -22,7 +22,6 @@
 - `HnsMatchPlayerModels.sma`
 - `HnsMatchModeHud.sma`
 - `HnsMatchSemiClip.sma`
-- `HnsMatchStatsMysql.sma`
 - `hnsic/HnsIC.sma`
 
 这些文件的共同特点是：
@@ -58,10 +57,11 @@
   - HUD 已内置，继续保留旧源码没有意义
 - `HnsMatchSemiClip.sma`
   - 当前不再走独立插件实现
-- `HnsMatchStatsMysql.sma`
-  - 当前运行链未加载该插件，其他模块对其 native 已做可选依赖兼容
 - `hnsic/HnsIC.sma`
   - 旧版大杂烩主插件，和当前核心系统路线冲突
+
+本轮清理里，`HnsMatchStatsMysql.sma` 已按后续修正保留源码，不再作为删除项处理。  
+当前是否启用它，继续由你的实际运行配置决定。
 
 ## 本次同时整理的内容
 
