@@ -10,7 +10,7 @@ public training_init() {
 }
 
 public training_enable_rules() {
-	// Semiclip is handled by HnsMatchSemiClip.amxx; do not force it here.
+	// Semiclip 由核心内置逻辑处理，这里不再强行切旧插件方案。
 
 	if (!hook_cmd) {
 		hook_cmd = register_clcmd("+hook", "hook_on");
