@@ -100,6 +100,7 @@ public ascension_roundstart() {
 		g_eZones[i][ZONE_STATUS] = 0;
 		g_eZones[i][ZONE_CAPTURED] = 0;
 		g_eZones[i][ZONE_CAPTURE_TIME] = 0.0;
+		g_eZones[i][ZONE_CAPTURED_TYPE] = 0;
 		g_eZones[i][ZONE_PLAYER_COUNT] = 0;
 	}
 	
@@ -179,7 +180,7 @@ public ascension_freezeend() {
 
 // ============================================
 // ★ 核心：点位检测任务（每1.0秒）
-// 使用玩家 origin 做点检测，简单可靠
+// 使用包围盒判定，并接入停留时间
 // ============================================
 public taskAscensionDetect() {
 	if (g_eMatchState != STATE_ENABLED) {
@@ -208,42 +209,31 @@ public taskAscensionDetect() {
 	
 	if (iTNum == 0) return;
 
-	// ★ 每个 zone 独立检测：只要有人进入，就按该 zone 的 type 给分
+	// ★ 每个 zone 独立检测：有人进入并停留足够时间才判定成功
 	for (new zoneId = 0; zoneId < g_iZoneCount; zoneId++) {
 		if (!g_eZones[zoneId][ZONE_ENABLED]) continue;
 		if (g_eZones[zoneId][ZONE_CAPTURED]) continue; // 已占领，跳过
-
-		new Float:zMin[3], Float:zMax[3];
-		zMin[0] = g_eZones[zoneId][ZONE_MINS][0];
-		zMin[1] = g_eZones[zoneId][ZONE_MINS][1];
-		zMin[2] = g_eZones[zoneId][ZONE_MINS][2];
-		zMax[0] = g_eZones[zoneId][ZONE_MAXS][0];
-		zMax[1] = g_eZones[zoneId][ZONE_MAXS][1];
-		zMax[2] = g_eZones[zoneId][ZONE_MAXS][2];
 
 		new iCount = 0;
 		for (new i = 0; i < iTNum; i++) {
 			new id = iTPlayers[i];
 			if (!is_user_alive(id)) continue;
-
-			new Float:fOrigin[3];
-			pev(id, pev_origin, fOrigin);
-
-			if (fOrigin[0] >= zMin[0] && fOrigin[0] <= zMax[0] &&
-			    fOrigin[1] >= zMin[1] && fOrigin[1] <= zMax[1] &&
-			    fOrigin[2] >= zMin[2] && fOrigin[2] <= zMax[2]) {
+			if (is_player_in_box(id, g_eZones[zoneId][ZONE_MINS], g_eZones[zoneId][ZONE_MAXS])) {
 				iCount++;
 			}
 		}
 
 		if (iCount >= 1) {
-			new Float:pointScore;
-			new iZoneType = g_eZones[zoneId][ZONE_TYPE];
-			switch (iZoneType) {
-				case 6, 5: pointScore = g_flPointScapScore5;
-				case 4: pointScore = g_flPointScapScore4;
-				default: pointScore = g_flPointScapScore3;
+			g_eZones[zoneId][ZONE_STATUS] = 1;
+			g_eZones[zoneId][ZONE_PLAYER_COUNT] = iCount;
+			g_eZones[zoneId][ZONE_CAPTURE_TIME] += 1.0;
+
+			if (g_eZones[zoneId][ZONE_CAPTURE_TIME] + 0.001 < g_flPointScapStayTime) {
+				continue;
 			}
+
+			new Float:pointScore = pointscap_get_zone_score(zoneId);
+			new iZoneType = g_eZones[zoneId][ZONE_TYPE];
 
 			new iTeam = g_isTeamTT;
 			if (iTeam == HNS_TEAM_A)
@@ -253,7 +243,8 @@ public taskAscensionDetect() {
 
 			g_eZones[zoneId][ZONE_CAPTURED] = 1;
 			g_eZones[zoneId][ZONE_STATUS] = 2;
-			g_eZones[zoneId][ZONE_CAPTURE_TIME] = g_flPointScapDetectTime;
+			g_eZones[zoneId][ZONE_CAPTURE_TIME] = g_flPointScapStayTime;
+			g_eZones[zoneId][ZONE_CAPTURED_TYPE] = iZoneType;
 			g_eZones[zoneId][ZONE_PLAYER_COUNT] = iCount;
 
 			if (g_iPointScapSoundCapture) {
@@ -270,6 +261,7 @@ public taskAscensionDetect() {
 		} else {
 			g_eZones[zoneId][ZONE_STATUS] = 0;
 			g_eZones[zoneId][ZONE_CAPTURE_TIME] = 0.0;
+			g_eZones[zoneId][ZONE_CAPTURED_TYPE] = 0;
 			g_eZones[zoneId][ZONE_PLAYER_COUNT] = 0;
 		}
 	}
@@ -414,6 +406,7 @@ public ascension_swap() {
 	for (new i = 0; i < g_iZoneCount; i++) {
 		g_eZones[i][ZONE_STATUS] = 0;
 		g_eZones[i][ZONE_CAPTURE_TIME] = 0.0;
+		g_eZones[i][ZONE_CAPTURED_TYPE] = 0;
 		g_eZones[i][ZONE_PLAYER_COUNT] = 0;
 	}
 	ResetAfkData();
@@ -588,6 +581,7 @@ stock remove_all_tasks() {
 	if (task_exists(TASK_POINTSCAP_HUD)) remove_task(TASK_POINTSCAP_HUD);
 	if (task_exists(TASK_POINTSCAP_FALLBACK)) remove_task(TASK_POINTSCAP_FALLBACK);
 	if (task_exists(TASK_POINTSCAP_FORCE)) remove_task(TASK_POINTSCAP_FORCE);
+	if (task_exists(TASK_POINTSCAP_ROUNDTIMER)) remove_task(TASK_POINTSCAP_ROUNDTIMER);
 }
 
 // ============================================

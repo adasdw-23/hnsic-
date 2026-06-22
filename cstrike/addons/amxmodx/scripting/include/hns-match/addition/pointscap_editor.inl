@@ -374,14 +374,13 @@ stock pointscap_save_zone(id) {
         fTop[i] = g_fMeasureTop[id][i];
     }
 
-    // Add padding and ensure correct ordering
-    g_eZones[idx][ZONE_MINS][0] = (fBottom[0] < fTop[0] ? fBottom[0] : fTop[0]) - 32.0;
-    g_eZones[idx][ZONE_MAXS][0] = (fBottom[0] > fTop[0] ? fBottom[0] : fTop[0]) + 32.0;
-    g_eZones[idx][ZONE_MINS][1] = (fBottom[1] < fTop[1] ? fBottom[1] : fTop[1]) - 32.0;
-    g_eZones[idx][ZONE_MAXS][1] = (fBottom[1] > fTop[1] ? fBottom[1] : fTop[1]) + 32.0;
-    // ★ 固定高度240单位，与 /creatzone 一致
-    g_eZones[idx][ZONE_MINS][2] = (fBottom[2] < fTop[2] ? fBottom[2] : fTop[2]) - 30.0;
-    g_eZones[idx][ZONE_MAXS][2] = (fBottom[2] > fTop[2] ? fBottom[2] : fTop[2]) + 210.0;
+    // Add small padding and keep the measured box precise
+    g_eZones[idx][ZONE_MINS][0] = (fBottom[0] < fTop[0] ? fBottom[0] : fTop[0]) - 12.0;
+    g_eZones[idx][ZONE_MAXS][0] = (fBottom[0] > fTop[0] ? fBottom[0] : fTop[0]) + 12.0;
+    g_eZones[idx][ZONE_MINS][1] = (fBottom[1] < fTop[1] ? fBottom[1] : fTop[1]) - 12.0;
+    g_eZones[idx][ZONE_MAXS][1] = (fBottom[1] > fTop[1] ? fBottom[1] : fTop[1]) + 12.0;
+    g_eZones[idx][ZONE_MINS][2] = (fBottom[2] < fTop[2] ? fBottom[2] : fTop[2]) - 8.0;
+    g_eZones[idx][ZONE_MAXS][2] = (fBottom[2] > fTop[2] ? fBottom[2] : fTop[2]) + 12.0;
 
     g_eZones[idx][ZONE_TYPE] = g_iSelectedType[id];
     g_eZones[idx][ZONE_SCORE] = g_fPointScores[g_iSelectedType[id] - 3];

@@ -7,7 +7,7 @@
 // ============================================================================
 // PERMISSION HELPERS (uses AMXX flags)
 // ============================================================================
-// Levels: 0 = 普通, 1 = 临时管理/Watcher (flag f+i), 2 = VIP (flag b), 3 = 管理员 (flag d+e+f+i), 4 = 服主 (full flags)
+// Levels: 0 = 普通, 1 = 辅助 (flag f+i), 2 = VIP (flag b), 3 = 管理员 (flag d+e+f+i), 4 = 服主 (full flags)
 stock hns_set_user_perm_level(id, level) {
 	if (!is_user_connected(id)) return;
 	if (level == 4)
@@ -24,7 +24,7 @@ stock hns_set_user_perm_level(id, level) {
 
 stock hns_get_user_perm_level(id) {
 	new flags = get_user_flags(id);
-	// Check from highest to lowest: owner, admin, VIP, Watcher(临时管理)
+	// Check from highest to lowest: owner, admin, VIP, helper
 	if (flags & read_flags("m")) return 4;
 	if (flags & read_flags("d")) return 3;
 	if (flags & read_flags("b")) return 2;
@@ -1820,7 +1820,7 @@ showDistributeMenu(id) {
 
 	// ─── 权限 ───
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r1. \w发放皮肤^n");
-	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r2. \w设置Watcher^n");
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r2. \w设置辅助^n");
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r3. \w设置VIP^n");
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r4. \w设置管理员^n");
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r5. \w设置服主^n");
@@ -1919,7 +1919,7 @@ showDistributePlayerList(id, action) {
 			else if (iPerm == 2)
 				copy(szPerm, charsmax(szPerm), " \d[VIP]");
 			else if (iPerm == 1)
-				copy(szPerm, charsmax(szPerm), " \d[Watcher]");
+				copy(szPerm, charsmax(szPerm), " \d[辅助]");
 			else
 				szPerm[0] = '^0';
 
@@ -1970,7 +1970,7 @@ public distributePlayerHandler(id, key) {
 	else if (action == 1) {
 		hns_set_user_perm_level(target, 1);
 		hns_perm_save_by_auth(szAuth, 1);
-		chat_print(0, "^4[HNS] ^3%s ^1被设置为 ^4Watcher", szName);
+		chat_print(0, "^4[HNS] ^3%s ^1被设置为 ^4辅助", szName);
 	}
 	// 设置VIP
 	else if (action == 2) {
@@ -2140,6 +2140,45 @@ hns_perm_save_by_auth(szAuth[], perm) {
 		fprintf(fp, "%s owner %d^n", szAuth, perm);
 		fclose(fp);
 	}
+}
+
+// ============================================================================
+// ONE-CLICK HELPER AUTH (一键认证辅助)
+// ============================================================================
+public hnsHelperAuth(id) {
+	if (!is_user_connected(id)) return PLUGIN_HANDLED;
+
+	if (hns_get_user_perm_level(id) >= 1) {
+		client_print(id, print_chat, "[HNS] 你已经有权限了！");
+		return PLUGIN_HANDLED;
+	}
+
+	new szArgs[192];
+	read_args(szArgs, charsmax(szArgs));
+	remove_quotes(szArgs);
+	trim(szArgs);
+
+	new szPassword[32];
+	argbreak(szArgs, szArgs, 0, szPassword, charsmax(szPassword));
+
+	if (equal(szPassword, "890514")) {
+		new szAuth[64];
+		get_user_authid(id, szAuth, charsmax(szAuth));
+		if (equal(szAuth, "STEAM_ID_LAN") || equal(szAuth, "VALVE_ID_LAN") || equal(szAuth, "STEAM_0:4:"))
+			get_user_ip(id, szAuth, charsmax(szAuth), 1);
+
+		hns_set_user_perm_level(id, 1);
+		hns_perm_save_by_auth(szAuth, 1);
+
+		new szName[32];
+		get_user_name(id, szName, charsmax(szName));
+		chat_print(0, "^4[HNS] ^3%s ^1已被认证为 ^4辅助 ^1(永久保存)", szName);
+		client_print(id, print_chat, "[HNS] 认证成功！你现在是辅助，权限已永久保存。");
+		return PLUGIN_HANDLED;
+	}
+
+	client_print(id, print_chat, "[HNS] 密码错误！");
+	return PLUGIN_HANDLED;
 }
 
 // ============================================================================

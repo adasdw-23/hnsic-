@@ -64,6 +64,7 @@ public client_disconnected(id) {
 	}
 
 	if(id == g_eWatcher[w_iId]) {
+		remove_user_flags(id, hns_get_flag_watcher());
 		g_eWatcher[w_iId] = 0;
 		g_eWatcher[w_szSteamId] = "";
 		client_print_color(0, print_team_blue, "%L", LANG_PLAYER , "WTR_LEAVE", g_sPrefix, id);
@@ -290,7 +291,7 @@ public ActivateWatcher(id) {
 	get_user_authid(id, g_eWatcher[w_szSteamId], charsmax(g_eWatcher[w_szSteamId]));
 	g_eWatcher[w_iId] = id;
 	
-	set_user_flags(id, hns_get_flag_watcher());
+	set_user_flags(id, get_user_flags(id) | hns_get_flag_watcher());
 	
 	return PLUGIN_CONTINUE;
 }

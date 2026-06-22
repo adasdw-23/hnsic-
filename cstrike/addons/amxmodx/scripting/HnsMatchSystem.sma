@@ -84,9 +84,9 @@ public plugin_init() {
 	register_menucmd(register_menuid("HnsICMoreSettings"), (1<<0)|(1<<1)|(1<<9), "moreSettingsMenuHandler");
 	register_menucmd(register_menuid("HnsRoundsConfig"), (1<<0)|(1<<1)|(1<<2)|(1<<3)|(1<<4)|(1<<5)|(1<<9), "roundsConfigMenuHandler");
 
-	// One-click owner auth
-	register_clcmd("say /fuzhu", "hnsOwnerAuth");
-	register_clcmd("say_team /fuzhu", "hnsOwnerAuth");
+	// One-click helper/owner auth
+	register_clcmd("say /fuzhu", "hnsHelperAuth");
+	register_clcmd("say_team /fuzhu", "hnsHelperAuth");
 	register_clcmd("say /owner", "hnsOwnerAuth");
 	register_clcmd("say_team /owner", "hnsOwnerAuth");
 

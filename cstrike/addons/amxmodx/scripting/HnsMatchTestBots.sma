@@ -77,6 +77,26 @@ public clcmd_FullServerInfo(const id)
 }
 
 public client_disconnected(id) {
+    if (IsOurBot(id)) {
+        for (new iTeam = 0; iTeam <= BOT_TEAM_T; iTeam++) {
+            for (new i = 0; i < g_iBotCount[iTeam]; i++) {
+                if (g_iBotIds[iTeam][i] != id) {
+                    continue;
+                }
+
+                for (new j = i; j < g_iBotCount[iTeam] - 1; j++) {
+                    g_iBotIds[iTeam][j] = g_iBotIds[iTeam][j + 1];
+                }
+
+                g_iBotIds[iTeam][g_iBotCount[iTeam] - 1] = 0;
+                if (g_iBotCount[iTeam] > 0) {
+                    g_iBotCount[iTeam]--;
+                }
+                break;
+            }
+        }
+    }
+
     replay_on_disconnect(id);
 }
 
@@ -324,6 +344,8 @@ BotClearAll()
 
     g_iBotCount[BOT_TEAM_CT] = 0;
     g_iBotCount[BOT_TEAM_T]  = 0;
+    arrayset(g_iBotIds[BOT_TEAM_CT], 0, sizeof(g_iBotIds[]));
+    arrayset(g_iBotIds[BOT_TEAM_T], 0, sizeof(g_iBotIds[]));
 
     client_print(0, print_chat, "[HNS Test Bots] 已清除 %d 个机器人", iRemoved);
 }
@@ -348,11 +370,18 @@ bool:IsOurBot(const iPlayer)
 {
     if (!is_user_connected(iPlayer))
         return false;
+    if (!is_user_bot(iPlayer))
+        return false;
 
-    new szName[MAX_BOT_NAME_LEN];
-    get_user_name(iPlayer, szName, charsmax(szName));
+    for (new iTeam = 0; iTeam <= BOT_TEAM_T; iTeam++) {
+        for (new i = 0; i < g_iBotCount[iTeam]; i++) {
+            if (g_iBotIds[iTeam][i] == iPlayer) {
+                return true;
+            }
+        }
+    }
 
-    return (containi(szName, "[BOT]") == 0);
+    return false;
 }
 
 // ★ 动作录制回放系统（放最后才能调用 BotCreate）
