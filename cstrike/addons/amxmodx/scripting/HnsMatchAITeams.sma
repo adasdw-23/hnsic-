@@ -1,5 +1,7 @@
 #include <amxmodx>
 #include <amxmisc>
+#include <json>
+#include <PersistentDataStorage>
 #include <reapi>
 #include <hns_matchsystem>
 #include <hns_matchsystem_dbmysql>
@@ -28,6 +30,9 @@
 #define MAX_MAP_NAME 32
 #define MAX_STEAMID 24
 #define MAX_IP 22
+#define MAX_PLAYERSLIST_BUFFER 2048
+#define NAME_DATA_AUTH "plr_auth"
+#define NAME_DATA_TEAM "plr_team"
 
 // AI状态
 enum _:AI_STATE {
@@ -174,6 +179,7 @@ new bool:g_bDebugMode = false;
 
 // 状态保存
 new g_szStateFile[128];
+new g_szPlayersListBuffer[MAX_PLAYERSLIST_BUFFER];
 
 // 日志文件
 new g_szLogFile[128];
@@ -702,17 +708,51 @@ perform_grouping() {
     
     // 写日志
     log_grouping();
-    
-    // 保存状态
-    save_state();
-    
-    // 进入就绪状态
+
+    // 进入就绪状态并保存当前分组结果
     g_eAIState = AI_STATE_READY;
+    save_grouping_snapshot();
     
     client_print(0, print_chat, "[AI Teams] Grouping complete! Use ^3/ai^1 for menu.");
     
     // Auto-start mode voting after 3 seconds
     set_task(3.0, "auto_start_vote");
+}
+
+save_grouping_snapshot() {
+    save_playerslist_for_match();
+    save_state();
+}
+
+save_playerslist_for_match() {
+    new JSON:JSArray = json_init_array();
+
+    for (new i = 1; i <= MAX_PLAYERS; i++) {
+        if (!g_ePlayers[i][PAD_IN_TEAM]) {
+            continue;
+        }
+
+        new szIndexName[16];
+        formatex(szIndexName, charsmax(szIndexName), "player_%d", i);
+        new JSON:JSIndex = json_init_string(szIndexName);
+        json_array_append_value(JSArray, JSIndex);
+        json_free(JSIndex);
+
+        new szAuth[MAX_STEAMID];
+        get_user_authid(i, szAuth, charsmax(szAuth));
+
+        new JSON:JSData = json_init_object();
+        new iSavedTeam = (g_ePlayers[i][PAD_TEAM] == AI_TEAM_A) ? TEAM_TERRORIST : TEAM_CT;
+        json_object_set_string(JSData, NAME_DATA_AUTH, szAuth);
+        json_object_set_number(JSData, NAME_DATA_TEAM, iSavedTeam);
+        json_array_append_value(JSArray, JSData);
+        json_free(JSData);
+    }
+
+    json_serial_to_string(JSArray, g_szPlayersListBuffer, charsmax(g_szPlayersListBuffer), true);
+    json_free(JSArray);
+
+    PDS_SetString("playerslist", g_szPlayersListBuffer);
 }
 
 select_captain(iTeam) {
@@ -1036,17 +1076,27 @@ start_mode_vote_all() {
 
 show_mode_vote_menu_all() {
     new szMenu[256], iLen;
+    new bool:bAllowDuel = (g_iRegisteredCount <= 2);
     iLen += format(szMenu[iLen], sizeof(szMenu) - iLen, "\r投票游戏模式 [全部模式]^n^n");
     iLen += format(szMenu[iLen], sizeof(szMenu) - iLen, "\r1. MR 模式^n");
     iLen += format(szMenu[iLen], sizeof(szMenu) - iLen, "\r2. 计时模式^n");
     iLen += format(szMenu[iLen], sizeof(szMenu) - iLen, "\r3. 突围模式 (点位积分)^n");
     iLen += format(szMenu[iLen], sizeof(szMenu) - iLen, "\r4. 吸血模式 (点位扣除)^n");
-    iLen += format(szMenu[iLen], sizeof(szMenu) - iLen, "\r5. 单挑决斗 (1v1)^n");
-    iLen += format(szMenu[iLen], sizeof(szMenu) - iLen, "\r6. 回合制^n^n");
+    if (bAllowDuel) {
+        iLen += format(szMenu[iLen], sizeof(szMenu) - iLen, "\r5. 单挑决斗 (1v1)^n");
+        iLen += format(szMenu[iLen], sizeof(szMenu) - iLen, "\r6. 回合制^n^n");
+    } else {
+        iLen += format(szMenu[iLen], sizeof(szMenu) - iLen, "\r5. 回合制^n^n");
+    }
     iLen += format(szMenu[iLen], sizeof(szMenu) - iLen, "\r0. 退出");
     
-    new iKeys = (1<<0)|(1<<1)|(1<<2)|(1<<3)|(1<<4)|(1<<5)|(1<<9);
-    g_iFilteredModeCount = 6;
+    new iKeys = (1<<0)|(1<<1)|(1<<2)|(1<<3)|(1<<4)|(1<<9);
+    if (bAllowDuel) {
+        iKeys |= (1<<5);
+        g_iFilteredModeCount = 6;
+    } else {
+        g_iFilteredModeCount = 5;
+    }
     
     for (new i = 1; i <= MAX_PLAYERS; i++) {
         if (g_ePlayers[i][PAD_REGISTERED]) {
@@ -1062,6 +1112,7 @@ show_mode_vote_menu_all() {
 show_mode_vote_menu_filtered() {
     new szMenu[256], iLen;
     new iMapType = g_iSelectedMapType;
+    new bool:bAllowDuel = (g_iRegisteredCount <= 2);
     
     // Boost地图: MR, Timer, Ascension, Vampire
     // 技巧地图: MR, Timer, Duel
@@ -1098,11 +1149,13 @@ show_mode_vote_menu_filtered() {
         iKeys |= (1<<(iKey-1));
         iKey++;
     } else {
-        // 技巧图: Duel + Rounds
-        iLen += format(szMenu[iLen], sizeof(szMenu) - iLen, "\r%d. 单挑决斗 (1v1)^n", iKey);
-        iKeys |= (1<<(iKey-1));
-        iKey++;
-        
+        // 技巧图: 2人可选 Duel + Rounds，多人仅保留 Rounds
+        if (bAllowDuel) {
+            iLen += format(szMenu[iLen], sizeof(szMenu) - iLen, "\r%d. 单挑决斗 (1v1)^n", iKey);
+            iKeys |= (1<<(iKey-1));
+            iKey++;
+        }
+
         iLen += format(szMenu[iLen], sizeof(szMenu) - iLen, "\r%d. 回合制^n", iKey);
         iKeys |= (1<<(iKey-1));
         iKey++;
@@ -1140,24 +1193,39 @@ public menu_mode_vote_handle(id, key) {
     new iMode;
 
     if (g_bModeVoteAll) {
-        // 6模式全投票：key 0-5 直接对应 6 个模式
-        new iAllModes[] = {VOTE_MR, VOTE_TIMER, VOTE_ASCENSION, VOTE_VAMPIRE, VOTE_DUEL, VOTE_ROUNDS};
-        if (key >= 0 && key < sizeof(iAllModes)) iMode = iAllModes[key];
+        // 2人显示6模式；多人隐藏单挑，仅保留回合制
+        new iAllModes[6], iModeCount;
+        iAllModes[iModeCount++] = VOTE_MR;
+        iAllModes[iModeCount++] = VOTE_TIMER;
+        iAllModes[iModeCount++] = VOTE_ASCENSION;
+        iAllModes[iModeCount++] = VOTE_VAMPIRE;
+        if (g_iRegisteredCount <= 2) {
+            iAllModes[iModeCount++] = VOTE_DUEL;
+        }
+        iAllModes[iModeCount++] = VOTE_ROUNDS;
+        if (key >= 0 && key < iModeCount) iMode = iAllModes[key];
         else return;
     } else {
-        // key 0-4 → 对应过滤后的模式
-        // Boost: 0=MR, 1=Timer, 2=Ascension, 3=Vampire, 4=大随机
-        // Skill: 0=MR, 1=Timer, 2=Duel, 3=Rounds, 4=大随机
+        // 按地图类型与人数映射模式
         new bool:bIsBoost = (g_iSelectedMapType == VOTE_MAPTYPE_RANDOM_BOOST);
-        if (key == 4) {
+        new bool:bAllowDuel = (g_iRegisteredCount <= 2);
+        if (bIsBoost && key == 4) {
+            iMode = VOTE_RANDOM;
+        } else if (!bIsBoost && ((bAllowDuel && key == 4) || (!bAllowDuel && key == 3))) {
             iMode = VOTE_RANDOM;
         } else if (bIsBoost) {
             new iBoostModes[] = {VOTE_MR, VOTE_TIMER, VOTE_ASCENSION, VOTE_VAMPIRE};
             if (key >= 0 && key < sizeof(iBoostModes)) iMode = iBoostModes[key];
             else return;
         } else {
-            new iSkillModes[] = {VOTE_MR, VOTE_TIMER, VOTE_DUEL, VOTE_ROUNDS};
-            if (key >= 0 && key < sizeof(iSkillModes)) iMode = iSkillModes[key];
+            new iSkillModes[4], iSkillCount;
+            iSkillModes[iSkillCount++] = VOTE_MR;
+            iSkillModes[iSkillCount++] = VOTE_TIMER;
+            if (bAllowDuel) {
+                iSkillModes[iSkillCount++] = VOTE_DUEL;
+            }
+            iSkillModes[iSkillCount++] = VOTE_ROUNDS;
+            if (key >= 0 && key < iSkillCount) iMode = iSkillModes[key];
             else return;
         }
     }
@@ -1265,9 +1333,14 @@ public task_vote_end() {
                 new iPool[] = {VOTE_MR, VOTE_TIMER, VOTE_ASCENSION, VOTE_VAMPIRE, VOTE_ROUNDS};
                 iRandomMode = iPool[random(sizeof(iPool))];
             } else {
-                // 技巧图: MR, Timer（排除Duel, Rounds）
-                new iPool[] = {VOTE_MR, VOTE_TIMER};
-                iRandomMode = iPool[random(sizeof(iPool))];
+                // 技巧图: 2人允许 Duel；多人仅 MR/Timer/Rounds
+                if (g_iRegisteredCount <= 2) {
+                    new iPool[] = {VOTE_MR, VOTE_TIMER, VOTE_DUEL, VOTE_ROUNDS};
+                    iRandomMode = iPool[random(sizeof(iPool))];
+                } else {
+                    new iPool[] = {VOTE_MR, VOTE_TIMER, VOTE_ROUNDS};
+                    iRandomMode = iPool[random(sizeof(iPool))];
+                }
             }
             
             g_iSelectedMode = iRandomMode;
@@ -1476,6 +1549,7 @@ public cmd_swap(id) {
     g_ePlayers[iTarget2][PAD_TEAM] = iTempTeam;
     
     recalc_team_scores();
+    save_grouping_snapshot();
     
     client_print(0, print_chat, "[AI Teams] ^3%n^1 and ^3%n^1 swapped.", iTarget1, iTarget2);
     show_grouping_result();
