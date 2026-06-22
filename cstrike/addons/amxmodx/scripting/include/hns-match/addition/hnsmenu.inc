@@ -604,9 +604,14 @@ public settingsMatchMenu(id) {
 		copy(szBoostStatus, charsmax(szBoostStatus), "关");
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r7. \w刀战模式: \y%s^n", szBoostStatus);
 
-	// ★ 点位积分设置
-	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r8. \w目标分数: \y%d^n", g_iPointScapTargetScore);
-	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r9. \w点位分数配置^n");
+	// ★ 点位积分设置只在点位模式内显示，避免和外部编辑工具混淆
+	if (g_iCurrentMode == MODE_ASCENSION || g_iCurrentMode == MODE_VAMP) {
+		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r8. \w目标分数: \y%d^n", g_iPointScapTargetScore);
+		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r9. \w点位分数配置^n");
+	} else {
+		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\d8. 点位目标分数 \d[仅点位模式]^n");
+		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\d9. 点位分数配置 \d[仅点位模式]^n");
+	}
 
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\r0. \w返回");
 
@@ -708,12 +713,21 @@ public settingsMatchMenuHandler(id, key) {
 	    }
 	    settingsMatchMenu(id);
 	} else if (key == 7) {
-	    // ★ 目标分数循环: 10→15→20→...→100→10, 步长5
-	    g_iPointScapTargetScore = g_iPointScapTargetScore >= 100 ? 10 : g_iPointScapTargetScore + 5;
-	    set_cvar_num("hns_pointscap_target_score", g_iPointScapTargetScore);
+	    if (g_iCurrentMode == MODE_ASCENSION || g_iCurrentMode == MODE_VAMP) {
+	    	// ★ 目标分数循环: 10→15→20→...→100→10, 步长5
+	    	g_iPointScapTargetScore = g_iPointScapTargetScore >= 100 ? 10 : g_iPointScapTargetScore + 5;
+	    	set_cvar_num("hns_pointscap_target_score", g_iPointScapTargetScore);
+	    } else {
+	    	chat_print(id, "点位目标分数仅在点位模式中可调.");
+	    }
 	    settingsMatchMenu(id);
 	} else if (key == 8) {
-	    showPointScoreMenu(id); // ★ 点位分数配置子菜单
+	    if (g_iCurrentMode == MODE_ASCENSION || g_iCurrentMode == MODE_VAMP) {
+	    	showPointScoreMenu(id); // ★ 点位分数配置子菜单
+	    } else {
+	    	chat_print(id, "点位分数配置仅在点位模式中可用.");
+	    	settingsMatchMenu(id);
+	    }
 	} else if (key == 9) {
 	    showMatchMenu(id); // Back
 	}
@@ -858,7 +872,7 @@ public quickActionsMenu(id) {
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r4. \w显示比分^n");
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r5. \w允许比赛^n");
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r6. \w禁止比赛^n");
-	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r7. \w点位编辑器^n");
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r7. \w更多设置^n");
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r8. \w投降^n");
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\r9. \w返回");
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r0. \w返回");
@@ -880,7 +894,7 @@ public handleQuickActionsMenu(id, key) {
 	} else if (key == 5) {
 	    cmdNoplay(id);
 	} else if (key == 6) {
-	    client_cmd(id, "pointscap_editor");
+	    showMoreSettingsMenu(id);
 	} else if (key == 7) {
 	    cmdSurrender(id);
 	} else if ((key == 8 || key == 9)) {
