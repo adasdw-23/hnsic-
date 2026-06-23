@@ -62,8 +62,8 @@ public plugin_init() {
 	RegisterHookChain(RG_PlayerBlind, "rgPlayerBlind", false);
 	RegisterHookChain(RG_CBasePlayer_MakeBomber, "rgPlayerMakeBomber", false);
 
-	// SemiClip is now handled by HnsMatchSemiClip.amxx (Fakemeta ShouldCollide)
-	// Do NOT register PreThink/PostThink here to avoid conflicts.
+	// SemiClip 现已由核心内置逻辑处理
+	// 这里不要重复注册旧的 PreThink/PostThink 方案，避免冲突。
 	// Keep the menu and commands for admin control.
 	// RegisterHookChain(RG_CBasePlayer_PreThink, "rgPlayerPreThink", false);
 	// RegisterHookChain(RG_CBasePlayer_PostThink, "rgPlayerPostThink", true);

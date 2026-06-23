@@ -22,6 +22,8 @@ new Float:g_fMeasureTop[33][3];
 new g_iMeasureState[33];
 new g_iSelectedZone[33];
 new g_iSelectedType[33];
+new g_iViewZonesPage[33];
+new g_iDeleteZonesPage[33];
 
 // Zone labels A-J
 new g_szZoneLabels[][] = {"A", "B", "C", "D", "E", "F", "G", "H", "I", "J"};
@@ -89,6 +91,13 @@ stock pointscapShowMainMenu(id) {
     len += formatex(menu[len], charsmax(menu) - len, "\r0.\w 退出");
 
     show_menu(id, MENU_KEY_1|MENU_KEY_2|MENU_KEY_3|MENU_KEY_4|MENU_KEY_0, menu, -1, "PointScap Main Menu");
+}
+
+stock pointscap_get_total_pages(iTotalItems, iPerPage) {
+    if (iTotalItems <= 0 || iPerPage <= 0) {
+        return 1;
+    }
+    return (iTotalItems + iPerPage - 1) / iPerPage;
 }
 
 /**
@@ -374,13 +383,14 @@ stock pointscap_save_zone(id) {
         fTop[i] = g_fMeasureTop[id][i];
     }
 
-    // Add small padding and keep the measured box precise
-    g_eZones[idx][ZONE_MINS][0] = (fBottom[0] < fTop[0] ? fBottom[0] : fTop[0]) - 12.0;
-    g_eZones[idx][ZONE_MAXS][0] = (fBottom[0] > fTop[0] ? fBottom[0] : fTop[0]) + 12.0;
-    g_eZones[idx][ZONE_MINS][1] = (fBottom[1] < fTop[1] ? fBottom[1] : fTop[1]) - 12.0;
-    g_eZones[idx][ZONE_MAXS][1] = (fBottom[1] > fTop[1] ? fBottom[1] : fTop[1]) + 12.0;
-    g_eZones[idx][ZONE_MINS][2] = (fBottom[2] < fTop[2] ? fBottom[2] : fTop[2]) - 8.0;
-    g_eZones[idx][ZONE_MAXS][2] = (fBottom[2] > fTop[2] ? fBottom[2] : fTop[2]) + 12.0;
+    // Add padding and ensure correct ordering
+    g_eZones[idx][ZONE_MINS][0] = (fBottom[0] < fTop[0] ? fBottom[0] : fTop[0]) - 32.0;
+    g_eZones[idx][ZONE_MAXS][0] = (fBottom[0] > fTop[0] ? fBottom[0] : fTop[0]) + 32.0;
+    g_eZones[idx][ZONE_MINS][1] = (fBottom[1] < fTop[1] ? fBottom[1] : fTop[1]) - 32.0;
+    g_eZones[idx][ZONE_MAXS][1] = (fBottom[1] > fTop[1] ? fBottom[1] : fTop[1]) + 32.0;
+    // ★ 固定高度240单位，与 /creatzone 一致
+    g_eZones[idx][ZONE_MINS][2] = (fBottom[2] < fTop[2] ? fBottom[2] : fTop[2]) - 30.0;
+    g_eZones[idx][ZONE_MAXS][2] = (fBottom[2] > fTop[2] ? fBottom[2] : fTop[2]) + 210.0;
 
     g_eZones[idx][ZONE_TYPE] = g_iSelectedType[id];
     g_eZones[idx][ZONE_SCORE] = g_fPointScores[g_iSelectedType[id] - 3];
@@ -429,16 +439,33 @@ stock showViewZonesMenu(id) {
 
     new menu[512];
     new len = 0;
+    new const ITEMS_PER_PAGE = 7;
+    new iTotalPages = pointscap_get_total_pages(g_iZoneCount, ITEMS_PER_PAGE);
+    new iPage = g_iViewZonesPage[id];
+    if (iPage < 0) iPage = 0;
+    if (iPage >= iTotalPages) iPage = iTotalPages - 1;
+    g_iViewZonesPage[id] = iPage;
+    new iStart = iPage * ITEMS_PER_PAGE;
+    new iEnd = min(iStart + ITEMS_PER_PAGE, g_iZoneCount);
 
-    len += formatex(menu[len], charsmax(menu) - len, "\r查看点位^n^n");
+    len += formatex(menu[len], charsmax(menu) - len, "\r查看点位 \y[%d/%d]^n^n", iPage + 1, iTotalPages);
 
     new keys = MENU_KEY_0;
-    new maxItems = min(g_iZoneCount, 9);
-
-    for (new i = 0; i < maxItems; i++) {
+    new iDisplay = 1;
+    for (new i = iStart; i < iEnd; i++) {
         len += formatex(menu[len], charsmax(menu) - len, "\r%d.\w 点位 %s - %d人 (%.1f 分)^n",
-            i + 1, g_szZoneLabels[g_eZones[i][ZONE_LABEL]], g_eZones[i][ZONE_TYPE], g_eZones[i][ZONE_SCORE]);
-        keys |= (1 << i);
+            iDisplay, g_szZoneLabels[g_eZones[i][ZONE_LABEL]], g_eZones[i][ZONE_TYPE], g_eZones[i][ZONE_SCORE]);
+        keys |= (1 << (iDisplay - 1));
+        iDisplay++;
+    }
+
+    if (iPage > 0) {
+        len += formatex(menu[len], charsmax(menu) - len, "^n\r8.\w 上一页");
+        keys |= MENU_KEY_8;
+    }
+    if (iPage < iTotalPages - 1) {
+        len += formatex(menu[len], charsmax(menu) - len, "^n\r9.\w 下一页");
+        keys |= MENU_KEY_9;
     }
 
     len += formatex(menu[len], charsmax(menu) - len, "^n\r0.\w 返回");
@@ -455,21 +482,43 @@ public handleViewZonesMenu(id, key) {
         return PLUGIN_HANDLED;
     }
 
-    if (key >= 0 && key < g_iZoneCount) {
+    new const ITEMS_PER_PAGE = 7;
+    new iTotalPages = pointscap_get_total_pages(g_iZoneCount, ITEMS_PER_PAGE);
+    new iPage = g_iViewZonesPage[id];
+    if (iPage < 0) iPage = 0;
+    if (iPage >= iTotalPages) iPage = iTotalPages - 1;
+
+    if (key == 7 && iPage > 0) {
+        g_iViewZonesPage[id] = iPage - 1;
+        showViewZonesMenu(id);
+        return PLUGIN_HANDLED;
+    }
+    if (key == 8 && iPage < iTotalPages - 1) {
+        g_iViewZonesPage[id] = iPage + 1;
+        showViewZonesMenu(id);
+        return PLUGIN_HANDLED;
+    }
+
+    new iStart = iPage * ITEMS_PER_PAGE;
+    new iIndex = iStart + key;
+    new iEnd = min(iStart + ITEMS_PER_PAGE, g_iZoneCount);
+
+    if (key >= 0 && iIndex < iEnd) {
         // Teleport to zone
         new Float:teleportPos[3];
-        teleportPos[0] = (g_eZones[key][ZONE_MINS][0] + g_eZones[key][ZONE_MAXS][0]) / 2.0;
-        teleportPos[1] = (g_eZones[key][ZONE_MINS][1] + g_eZones[key][ZONE_MAXS][1]) / 2.0;
-        teleportPos[2] = g_eZones[key][ZONE_MINS][2] + 10.0;
+        teleportPos[0] = (g_eZones[iIndex][ZONE_MINS][0] + g_eZones[iIndex][ZONE_MAXS][0]) / 2.0;
+        teleportPos[1] = (g_eZones[iIndex][ZONE_MINS][1] + g_eZones[iIndex][ZONE_MAXS][1]) / 2.0;
+        teleportPos[2] = g_eZones[iIndex][ZONE_MINS][2] + 10.0;
 
         set_pev(id, pev_origin, teleportPos);
 
-        client_print(id, print_chat, "[PointScap] 已传送到点位 %s", g_szZoneLabels[g_eZones[key][ZONE_LABEL]]);
+        client_print(id, print_chat, "[PointScap] 已传送到点位 %s (%d人点)",
+            g_szZoneLabels[g_eZones[iIndex][ZONE_LABEL]], g_eZones[iIndex][ZONE_TYPE]);
 
         // Highlight zone
         new Float:peMins2[3], Float:peMaxs2[3];
-        peMins2[0] = g_eZones[key][ZONE_MINS][0]; peMins2[1] = g_eZones[key][ZONE_MINS][1]; peMins2[2] = g_eZones[key][ZONE_MINS][2];
-        peMaxs2[0] = g_eZones[key][ZONE_MAXS][0]; peMaxs2[1] = g_eZones[key][ZONE_MAXS][1]; peMaxs2[2] = g_eZones[key][ZONE_MAXS][2];
+        peMins2[0] = g_eZones[iIndex][ZONE_MINS][0]; peMins2[1] = g_eZones[iIndex][ZONE_MINS][1]; peMins2[2] = g_eZones[iIndex][ZONE_MINS][2];
+        peMaxs2[0] = g_eZones[iIndex][ZONE_MAXS][0]; peMaxs2[1] = g_eZones[iIndex][ZONE_MAXS][1]; peMaxs2[2] = g_eZones[iIndex][ZONE_MAXS][2];
         create_zone_beam_box(id, peMins2, peMaxs2, 255, 255, 0);
     }
 
@@ -488,16 +537,33 @@ stock showDeleteZoneMenu(id) {
 
     new menu[512];
     new len = 0;
+    new const ITEMS_PER_PAGE = 7;
+    new iTotalPages = pointscap_get_total_pages(g_iZoneCount, ITEMS_PER_PAGE);
+    new iPage = g_iDeleteZonesPage[id];
+    if (iPage < 0) iPage = 0;
+    if (iPage >= iTotalPages) iPage = iTotalPages - 1;
+    g_iDeleteZonesPage[id] = iPage;
+    new iStart = iPage * ITEMS_PER_PAGE;
+    new iEnd = min(iStart + ITEMS_PER_PAGE, g_iZoneCount);
 
-    len += formatex(menu[len], charsmax(menu) - len, "\r删除点位^n^n");
+    len += formatex(menu[len], charsmax(menu) - len, "\r删除点位 \y[%d/%d]^n^n", iPage + 1, iTotalPages);
 
     new keys = MENU_KEY_0;
-    new maxItems = min(g_iZoneCount, 9);
-
-    for (new i = 0; i < maxItems; i++) {
+    new iDisplay = 1;
+    for (new i = iStart; i < iEnd; i++) {
         len += formatex(menu[len], charsmax(menu) - len, "\r%d.\w 点位 %s - %d人^n",
-            i + 1, g_szZoneLabels[g_eZones[i][ZONE_LABEL]], g_eZones[i][ZONE_TYPE]);
-        keys |= (1 << i);
+            iDisplay, g_szZoneLabels[g_eZones[i][ZONE_LABEL]], g_eZones[i][ZONE_TYPE]);
+        keys |= (1 << (iDisplay - 1));
+        iDisplay++;
+    }
+
+    if (iPage > 0) {
+        len += formatex(menu[len], charsmax(menu) - len, "^n\r8.\w 上一页");
+        keys |= MENU_KEY_8;
+    }
+    if (iPage < iTotalPages - 1) {
+        len += formatex(menu[len], charsmax(menu) - len, "^n\r9.\w 下一页");
+        keys |= MENU_KEY_9;
     }
 
     len += formatex(menu[len], charsmax(menu) - len, "^n\r0.\w 返回");
@@ -514,11 +580,33 @@ public handleDeleteZoneMenu(id, key) {
         return PLUGIN_HANDLED;
     }
 
-    if (key >= 0 && key < g_iZoneCount) {
-        new deletedLabel = g_eZones[key][ZONE_LABEL];
+    new const ITEMS_PER_PAGE = 7;
+    new iTotalPages = pointscap_get_total_pages(g_iZoneCount, ITEMS_PER_PAGE);
+    new iPage = g_iDeleteZonesPage[id];
+    if (iPage < 0) iPage = 0;
+    if (iPage >= iTotalPages) iPage = iTotalPages - 1;
+
+    if (key == 7 && iPage > 0) {
+        g_iDeleteZonesPage[id] = iPage - 1;
+        showDeleteZoneMenu(id);
+        return PLUGIN_HANDLED;
+    }
+    if (key == 8 && iPage < iTotalPages - 1) {
+        g_iDeleteZonesPage[id] = iPage + 1;
+        showDeleteZoneMenu(id);
+        return PLUGIN_HANDLED;
+    }
+
+    new iStart = iPage * ITEMS_PER_PAGE;
+    new iIndex = iStart + key;
+    new iEnd = min(iStart + ITEMS_PER_PAGE, g_iZoneCount);
+
+    if (key >= 0 && iIndex < iEnd) {
+        new deletedLabel = g_eZones[iIndex][ZONE_LABEL];
+        new deletedType = g_eZones[iIndex][ZONE_TYPE];
 
         // Shift all zones after this one
-        for (new i = key; i < g_iZoneCount - 1; i++) {
+        for (new i = iIndex; i < g_iZoneCount - 1; i++) {
             g_eZones[i][ZONE_LABEL] = g_eZones[i + 1][ZONE_LABEL];
             g_eZones[i][ZONE_ENABLED] = g_eZones[i + 1][ZONE_ENABLED];
             g_eZones[i][ZONE_MINS] = g_eZones[i + 1][ZONE_MINS];
@@ -530,13 +618,16 @@ public handleDeleteZoneMenu(id, key) {
             g_eZones[i][ZONE_STATUS] = g_eZones[i + 1][ZONE_STATUS];
             g_eZones[i][ZONE_CAPTURED_TYPE] = g_eZones[i + 1][ZONE_CAPTURED_TYPE];
             g_eZones[i][ZONE_PLAYER_COUNT] = g_eZones[i + 1][ZONE_PLAYER_COUNT];
-            // ★ 同步Label到数组位置
-            g_eZones[i][ZONE_LABEL] = i;
         }
 
         g_iZoneCount--;
 
-        client_print(id, print_chat, "[PointScap] 点位 %s 已删除!", g_szZoneLabels[deletedLabel]);
+        if (g_iDeleteZonesPage[id] >= pointscap_get_total_pages(g_iZoneCount, ITEMS_PER_PAGE)) {
+            g_iDeleteZonesPage[id] = pointscap_get_total_pages(g_iZoneCount, ITEMS_PER_PAGE) - 1;
+        }
+        if (g_iDeleteZonesPage[id] < 0) g_iDeleteZonesPage[id] = 0;
+
+        client_print(id, print_chat, "[PointScap] 点位 %s (%d人点) 已删除!", g_szZoneLabels[deletedLabel], deletedType);
 
         // ★ 自动写入INI文件
         pointscap_save_config();
