@@ -10,6 +10,21 @@ stock bool:_pointscap_append_zone(iZoneLabel, iZoneType, Float:fMins[3], Float:f
 		return false;
 	}
 
+	// 基础校验：mins/maxs 必须形成有效盒子
+	for (new k = 0; k < 3; k++) {
+		if (fMins[k] > fMaxs[k]) {
+			new Float:tmp = fMins[k];
+			fMins[k] = fMaxs[k];
+			fMaxs[k] = tmp;
+		}
+	}
+	if (floatabs(fMaxs[0] - fMins[0]) < 8.0 ||
+		floatabs(fMaxs[1] - fMins[1]) < 8.0 ||
+		floatabs(fMaxs[2] - fMins[2]) < 8.0) {
+		server_print("[PointScap] Skip zone %c type=%d: invalid box (too small)", 'A' + iZoneLabel, iZoneType);
+		return false;
+	}
+
 	new iZone = g_iZoneCount;
 	g_eZones[iZone][ZONE_LABEL] = iZoneLabel;
 	g_eZones[iZone][ZONE_ENABLED] = 1;
@@ -36,49 +51,16 @@ stock bool:_pointscap_append_zone(iZoneLabel, iZoneType, Float:fMins[3], Float:f
 	return true;
 }
 
-stock Float:pointscap_get_zone_score(zoneId) {
-	new Float:flScore = g_eZones[zoneId][ZONE_SCORE];
-	if (flScore > 0.0) {
-		return flScore;
+stock pointscap_find_free_label() {
+	new bool:bUsed[26];
+	for (new i = 0; i < g_iZoneCount; i++) {
+		new l = g_eZones[i][ZONE_LABEL];
+		if (l >= 0 && l < 26) bUsed[l] = true;
 	}
-
-	switch (g_eZones[zoneId][ZONE_TYPE]) {
-		case 6, 5: return g_flPointScapScore5;
-		case 4: return g_flPointScapScore4;
+	for (new l = 0; l < MAX_ZONES; l++) {
+		if (!bUsed[l]) return l;
 	}
-
-	return g_flPointScapScore3;
-}
-
-stock pointscap_set_default_bounds(iType, Float:fOrigin[3], Float:fMins[3], Float:fMaxs[3]) {
-	new Float:flHalfXY;
-	new Float:flDown;
-	new Float:flUp;
-
-	switch (iType) {
-		case 5: {
-			flHalfXY = 38.0;
-			flDown = 8.0;
-			flUp = 68.0;
-		}
-		case 4: {
-			flHalfXY = 52.0;
-			flDown = 10.0;
-			flUp = 78.0;
-		}
-		default: {
-			flHalfXY = 68.0;
-			flDown = 12.0;
-			flUp = 88.0;
-		}
-	}
-
-	fMins[0] = fOrigin[0] - flHalfXY;
-	fMins[1] = fOrigin[1] - flHalfXY;
-	fMins[2] = fOrigin[2] - flDown;
-	fMaxs[0] = fOrigin[0] + flHalfXY;
-	fMaxs[1] = fOrigin[1] + flHalfXY;
-	fMaxs[2] = fOrigin[2] + flUp;
+	return -1;
 }
 
 // ============================================
@@ -371,18 +353,15 @@ _pointscap_auto_generate(szMapName[]) {
 			if (spawns[idx][2] > maxZ) maxZ = spawns[idx][2];
 		}
 
-		minX -= 70.0; minY -= 70.0; minZ -= 15.0;
-		maxX += 70.0; maxY += 70.0; maxZ += 90.0;
+		minX -= 120.0; minY -= 120.0; minZ -= 80.0;
+		maxX += 120.0; maxY += 120.0; maxZ += 80.0;
 
 		// 写入 g_eZones (内存)
 		g_eZones[c][ZONE_ENABLED] = 1;
 		g_eZones[c][ZONE_LABEL] = c;
 		g_eZones[c][ZONE_STATUS] = 0;
 		g_eZones[c][ZONE_TYPE] = 3;
-		g_eZones[c][ZONE_SCORE] = g_flPointScapScore3;
-		g_eZones[c][ZONE_CAPTURED] = 0;
 		g_eZones[c][ZONE_CAPTURE_TIME] = 0.0;
-		g_eZones[c][ZONE_CAPTURED_TYPE] = 0;
 		g_eZones[c][ZONE_PLAYER_COUNT] = 0;
 		g_eZones[c][ZONE_MINS][0] = minX;
 		g_eZones[c][ZONE_MINS][1] = minY;
@@ -483,36 +462,63 @@ public cmdCreatZone(id) {
 		return PLUGIN_HANDLED;
 	}
 
-	// 读取类型参数
-	new szArg[8], iType = 3;
-	read_argv(1, szArg, charsmax(szArg));
-	if (szArg[0]) iType = str_to_num(szArg);
+	// 参数:
+	// /creatzone [3|4|5]
+	// /creatzone <A-Z> [3|4|5]
+	new szArg1[16], szArg2[16];
+	read_argv(1, szArg1, charsmax(szArg1));
+	read_argv(2, szArg2, charsmax(szArg2));
+
+	new iLabel = -1;
+	new iType = 3;
+
+	if (szArg1[0] >= 'A' && szArg1[0] <= 'Z') {
+		iLabel = szArg1[0] - 'A';
+		if (szArg2[0]) iType = str_to_num(szArg2);
+	} else if (szArg1[0] >= 'a' && szArg1[0] <= 'z') {
+		iLabel = szArg1[0] - 'a';
+		if (szArg2[0]) iType = str_to_num(szArg2);
+	} else if (szArg1[0]) {
+		iType = str_to_num(szArg1);
+	}
+
 	if (iType < 3) iType = 3;
 	if (iType > 5) iType = 5;
+
+	if (iLabel < 0) {
+		iLabel = pointscap_find_free_label();
+	}
+	if (iLabel < 0 || iLabel >= MAX_ZONES) {
+		client_print(id, print_chat, "[PointScap] 无可用标签了(最多 %d 个).", MAX_ZONES);
+		return PLUGIN_HANDLED;
+	}
 
 	// 获取玩家位置（使用 pev_origin 作为脚底基准）
 	new Float:fOrigin[3];
 	pev(id, pev_origin, fOrigin);
 	
-	new Float:fMins[3], Float:fMaxs[3];
-	pointscap_set_default_bounds(iType, fOrigin, fMins, fMaxs);
+	// ★ 固定高度：脚底向下30，向上210（约3个玩家身高），不再依赖 crouch/stand 状态
+	// XY各扩120，确保玩家在区域内移动时不会被边界卡住
+	new Float:minX = fOrigin[0] - 120.0;
+	new Float:minY = fOrigin[1] - 120.0;
+	new Float:minZ = fOrigin[2] - 30.0;
+	new Float:maxX = fOrigin[0] + 120.0;
+	new Float:maxY = fOrigin[1] + 120.0;
+	new Float:maxZ = fOrigin[2] + 210.0;
 
 	new i = g_iZoneCount;
 	g_eZones[i][ZONE_ENABLED] = 1;
-	g_eZones[i][ZONE_LABEL] = i;
+	g_eZones[i][ZONE_LABEL] = iLabel;
 	g_eZones[i][ZONE_STATUS] = 0;
 	g_eZones[i][ZONE_TYPE] = iType;
-	g_eZones[i][ZONE_SCORE] = (iType == 5) ? g_flPointScapScore5 : ((iType == 4) ? g_flPointScapScore4 : g_flPointScapScore3);
-	g_eZones[i][ZONE_CAPTURED] = 0;
 	g_eZones[i][ZONE_CAPTURE_TIME] = 0.0;
-	g_eZones[i][ZONE_CAPTURED_TYPE] = 0;
 	g_eZones[i][ZONE_PLAYER_COUNT] = 0;
-	g_eZones[i][ZONE_MINS][0] = fMins[0];
-	g_eZones[i][ZONE_MINS][1] = fMins[1];
-	g_eZones[i][ZONE_MINS][2] = fMins[2];
-	g_eZones[i][ZONE_MAXS][0] = fMaxs[0];
-	g_eZones[i][ZONE_MAXS][1] = fMaxs[1];
-	g_eZones[i][ZONE_MAXS][2] = fMaxs[2];
+	g_eZones[i][ZONE_MINS][0] = minX;
+	g_eZones[i][ZONE_MINS][1] = minY;
+	g_eZones[i][ZONE_MINS][2] = minZ;
+	g_eZones[i][ZONE_MAXS][0] = maxX;
+	g_eZones[i][ZONE_MAXS][1] = maxY;
+	g_eZones[i][ZONE_MAXS][2] = maxZ;
 	g_iZoneCount++;
 
 	new szPath[256], szMapName[32];
@@ -521,9 +527,8 @@ public cmdCreatZone(id) {
 	_save_zones_ini(szPath, szMapName);
 
 	client_print(id, print_chat, "[PointScap] 点位 %c 已创建! 类型=%d人, 坐标=(%.0f,%.0f,%.0f)", 
-		'A' + i, iType, fOrigin[0], fOrigin[1], fOrigin[2]);
-	client_print(id, print_chat, "[PointScap] 判定框: %.0fx%.0fx%.0f, 已自动保存.",
-		fMaxs[0] - fMins[0], fMaxs[1] - fMins[1], fMaxs[2] - fMins[2]);
+		'A' + iLabel, iType, fOrigin[0], fOrigin[1], fOrigin[2]);
+	client_print(id, print_chat, "[PointScap] 区域大小: 240x240x240, 已自动保存.");
 
 	return PLUGIN_HANDLED;
 }
@@ -566,11 +571,8 @@ public cmdDelZone(id) {
 	}
 
 	if (!iDeletedCount) {
-		if (iType) {
-			client_print(id, print_chat, "[PointScap] 未找到点位 %c 的 %d人类型.", szArg[0], iType);
-		} else {
-			client_print(id, print_chat, "[PointScap] 未找到点位 %c.", szArg[0]);
-		}
+		if (iType) client_print(id, print_chat, "[PointScap] 未找到点位 %c 的 %d人类型.", szArg[0], iType);
+		else client_print(id, print_chat, "[PointScap] 未找到点位 %c.", szArg[0]);
 		return PLUGIN_HANDLED;
 	}
 

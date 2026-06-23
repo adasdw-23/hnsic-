@@ -22,6 +22,55 @@ public ascension_init() {
 	// ★ 点位分数设置已移到主菜单
 }
 
+stock Float:pointscap_get_zone_score(iZoneType) {
+	switch (iZoneType) {
+		case 6, 5: return g_flPointScapScore5;
+		case 4: return g_flPointScapScore4;
+	}
+	return g_flPointScapScore3;
+}
+
+stock pointscap_add_hns_team_score(HNS_TEAM:iTeam, Float:flScore) {
+	if (flScore <= 0.0) return;
+	if (iTeam == HNS_TEAM_A) g_flScoreA += flScore;
+	else g_flScoreB += flScore;
+}
+
+stock HNS_TEAM:pointscap_get_hns_team_by_cs_team(TeamName:iTeam) {
+	// g_isTeamTT 表示当前哪一边是 T
+	if (iTeam == TEAM_TERRORIST) return g_isTeamTT;
+	return HNS_TEAM:!g_isTeamTT;
+}
+
+stock pointscap_get_main_leader(&iSecond, &Float:flMax, &Float:flSecond) {
+	new iLeader = -1;
+	iSecond = -1;
+	flMax = -1.0;
+	flSecond = -1.0;
+
+	for (new i = 0; i < g_iZoneCount; i++) {
+		new Float:v = g_flPointScapMainTrend[i];
+		if (v > flMax) {
+			flSecond = flMax;
+			iSecond = iLeader;
+			flMax = v;
+			iLeader = i;
+		} else if (v > flSecond) {
+			flSecond = v;
+			iSecond = i;
+		}
+	}
+	return iLeader;
+}
+
+stock ascension_abort_missing_zones() {
+	chat_print(0, "[Ascension] 当前地图没有点位配置，已阻止点位积分模式启动.");
+	setTaskHud(0, 0.5, 1, 255, 80, 80, 5.0, "[Ascension] 当前地图没有点位配置，无法开始点位积分模式");
+	ExecuteForward(g_hForwards[MATCH_CANCEL], _);
+	match_reset_data();
+	training_start();
+}
+
 // ============================================
 // 模式开始
 // ============================================
@@ -44,6 +93,10 @@ public ascension_start() {
 	pointscap_load_zones();
 	
 	server_print("[Ascension] Zones loaded: %d", g_iZoneCount);
+	if (g_iZoneCount <= 0) {
+		ascension_abort_missing_zones();
+		return;
+	}
 	
 	set_cvars_mode(MODE_ASCENSION);
 	loadMapCFG();
@@ -83,6 +136,10 @@ public ascension_roundstart() {
 	pointscap_load_zones();
 	
 	server_print("[Ascension] roundstart loaded %d zones", g_iZoneCount);
+	if (g_iZoneCount <= 0) {
+		ascension_abort_missing_zones();
+		return;
+	}
 	for (new i = 0; i < g_iZoneCount; i++) {
 		server_print("[Ascension] Zone %d: label=%c type=%d enabled=%d mins=(%.0f,%.0f,%.0f) maxs=(%.0f,%.0f,%.0f)",
 			i, 'A' + g_eZones[i][ZONE_LABEL], g_eZones[i][ZONE_TYPE], g_eZones[i][ZONE_ENABLED],
@@ -93,14 +150,22 @@ public ascension_roundstart() {
 	g_bPointScapDetectFirstRun = true; // ★ 重置首次运行标记
 	
 	g_iPointScapRound++;
+	g_iPointScapRoundCaptures = 0;
 	g_flRoundTime = 0.0;
+	g_iPointScapMainZone = -1;
+	g_iPointScapMainState = 0;
+	g_flPointScapMainWindowLeft = g_flPointScapMainWindow;
+	g_bPointScapMainConflictMsg = false;
+	g_bPointScapMainChosenMsg = false;
+	for (new i = 0; i < MAX_ZONES; i++) {
+		g_flPointScapMainTrend[i] = 0.0;
+	}
 	
 	// 重置区域状态
 	for (new i = 0; i < g_iZoneCount; i++) {
 		g_eZones[i][ZONE_STATUS] = 0;
 		g_eZones[i][ZONE_CAPTURED] = 0;
 		g_eZones[i][ZONE_CAPTURE_TIME] = 0.0;
-		g_eZones[i][ZONE_CAPTURED_TYPE] = 0;
 		g_eZones[i][ZONE_PLAYER_COUNT] = 0;
 	}
 	
@@ -180,7 +245,7 @@ public ascension_freezeend() {
 
 // ============================================
 // ★ 核心：点位检测任务（每1.0秒）
-// 使用包围盒判定，并接入停留时间
+// 使用玩家 origin 做点检测，简单可靠
 // ============================================
 public taskAscensionDetect() {
 	if (g_eMatchState != STATE_ENABLED) {
@@ -190,8 +255,14 @@ public taskAscensionDetect() {
 	}
 	
 	g_flPointScapDetectTime -= 1.0;
+	if (g_flPointScapMainWindowLeft > 0.0) {
+		g_flPointScapMainWindowLeft -= 1.0;
+	}
 	
 	if (g_flPointScapDetectTime <= 0.0) {
+		if (g_iPointScapMainState == 0 && g_iPointScapMainZone >= 0) {
+			g_iPointScapMainState = 1;
+		}
 		server_print("[Ascension] 检测时间结束! A=%.1f B=%.1f", g_flScoreA, g_flScoreB);
 		if (task_exists(TASK_POINTSCAP_DETECT)) remove_task(TASK_POINTSCAP_DETECT);
 		g_bPointScapDetectFirstRun = true;
@@ -208,61 +279,123 @@ public taskAscensionDetect() {
 	}
 	
 	if (iTNum == 0) return;
+	new Float:flNow = get_gametime();
 
-	// ★ 每个 zone 独立检测：有人进入并停留足够时间才判定成功
+	// ★ 每个 zone 独立检测：只要有人进入，就按该 zone 的 type 给分
 	for (new zoneId = 0; zoneId < g_iZoneCount; zoneId++) {
 		if (!g_eZones[zoneId][ZONE_ENABLED]) continue;
 		if (g_eZones[zoneId][ZONE_CAPTURED]) continue; // 已占领，跳过
+
+		new Float:zMin[3], Float:zMax[3];
+		zMin[0] = g_eZones[zoneId][ZONE_MINS][0];
+		zMin[1] = g_eZones[zoneId][ZONE_MINS][1];
+		zMin[2] = g_eZones[zoneId][ZONE_MINS][2];
+		zMax[0] = g_eZones[zoneId][ZONE_MAXS][0];
+		zMax[1] = g_eZones[zoneId][ZONE_MAXS][1];
+		zMax[2] = g_eZones[zoneId][ZONE_MAXS][2];
 
 		new iCount = 0;
 		for (new i = 0; i < iTNum; i++) {
 			new id = iTPlayers[i];
 			if (!is_user_alive(id)) continue;
-			if (is_player_in_box(id, g_eZones[zoneId][ZONE_MINS], g_eZones[zoneId][ZONE_MAXS])) {
+
+			new Float:fOrigin[3];
+			pev(id, pev_origin, fOrigin);
+
+			if (fOrigin[0] >= zMin[0] && fOrigin[0] <= zMax[0] &&
+			    fOrigin[1] >= zMin[1] && fOrigin[1] <= zMax[1] &&
+			    fOrigin[2] >= zMin[2] && fOrigin[2] <= zMax[2]) {
 				iCount++;
 			}
 		}
 
 		if (iCount >= 1) {
-			g_eZones[zoneId][ZONE_STATUS] = 1;
-			g_eZones[zoneId][ZONE_PLAYER_COUNT] = iCount;
-			g_eZones[zoneId][ZONE_CAPTURE_TIME] += 1.0;
+			// ★ 动态主点趋势：在观察窗口内累计“这个点被主攻的强度”
+			if (g_flPointScapMainWindowLeft > 0.0 && g_iPointScapMainState == 0 && g_iPointScapMainState != -1) {
+				g_flPointScapMainTrend[zoneId] += float(iCount);
+			}
 
-			if (g_eZones[zoneId][ZONE_CAPTURE_TIME] + 0.001 < g_flPointScapStayTime) {
+			if (g_eZones[zoneId][ZONE_STATUS] != 1) {
+				g_eZones[zoneId][ZONE_STATUS] = 1;
+				g_eZones[zoneId][ZONE_CAPTURE_TIME] = flNow;
+			}
+			g_eZones[zoneId][ZONE_PLAYER_COUNT] = iCount;
+
+			if ((flNow - g_eZones[zoneId][ZONE_CAPTURE_TIME]) < g_flPointScapStayTime) {
 				continue;
 			}
 
-			new Float:pointScore = pointscap_get_zone_score(zoneId);
-			new iZoneType = g_eZones[zoneId][ZONE_TYPE];
+			new Float:pointScore = pointscap_get_zone_score(g_eZones[zoneId][ZONE_TYPE]);
+			new bool:bMainBonus = false;
+			if (g_iPointScapMainState != -1 && g_iPointScapMainZone == zoneId) {
+				bMainBonus = true;
+				g_iPointScapMainState = 1;
+				pointScore += g_flPointScapMainBonus;
+			}
 
-			new iTeam = g_isTeamTT;
-			if (iTeam == HNS_TEAM_A)
-				g_flScoreA += pointScore;
-			else
-				g_flScoreB += pointScore;
+			new HNS_TEAM:iTeam = g_isTeamTT;
+			pointscap_add_hns_team_score(iTeam, pointScore);
 
+			// ★ 开局观察窗口内，如果第一次出现有效占点，直接锁主点（更贴合“开局先打的点就是主点”）
+			if (!g_bPointScapMainChosenMsg && g_flPointScapMainWindowLeft > 0.0 && g_iPointScapMainState == 0) {
+				g_iPointScapMainZone = zoneId;
+				g_iPointScapMainState = 1;
+				g_bPointScapMainChosenMsg = true;
+				chat_print(0, "[Ascension] 本回合主点锁定为 %c，额外加分 %.1f.",
+					'A' + g_eZones[g_iPointScapMainZone][ZONE_LABEL], g_flPointScapMainBonus);
+			}
+
+			g_iPointScapRoundCaptures++;
 			g_eZones[zoneId][ZONE_CAPTURED] = 1;
 			g_eZones[zoneId][ZONE_STATUS] = 2;
-			g_eZones[zoneId][ZONE_CAPTURE_TIME] = g_flPointScapStayTime;
-			g_eZones[zoneId][ZONE_CAPTURED_TYPE] = iZoneType;
-			g_eZones[zoneId][ZONE_PLAYER_COUNT] = iCount;
+			g_eZones[zoneId][ZONE_CAPTURE_TIME] = flNow;
 
 			if (g_iPointScapSoundCapture) {
 				client_cmd(0, "spk buttons/blip2.wav");
 			}
 
-			new szTeamName[8];
-			copy(szTeamName, charsmax(szTeamName), (iTeam == HNS_TEAM_A) ? "Team A" : "Team B");
-			client_print(0, print_chat, "[Ascension] %s 占领了点位 %c (%d人点)! 得分 +%.1f | A %.1f - B %.1f",
-				szTeamName, 'A' + g_eZones[zoneId][ZONE_LABEL], iZoneType, pointScore, g_flScoreA, g_flScoreB);
+			new szTeamName[8], szBonusTag[16];
+			if (iTeam == HNS_TEAM_A) copy(szTeamName, charsmax(szTeamName), "Team A");
+			else copy(szTeamName, charsmax(szTeamName), "Team B");
+			if (bMainBonus) copy(szBonusTag, charsmax(szBonusTag), " [主点]");
+			else szBonusTag[0] = 0;
+			client_print(0, print_chat, "[Ascension] %s 占领了点位 %c (%d人点)%s! 得分 +%.1f | A %.1f - B %.1f",
+				szTeamName, 'A' + g_eZones[zoneId][ZONE_LABEL], g_eZones[zoneId][ZONE_TYPE],
+				szBonusTag, pointScore, g_flScoreA, g_flScoreB);
 
 			server_print("[Asc-SCORE] Zone%c: 占领! %dT +%.1f -> A=%.1f B=%.1f",
 				'A' + g_eZones[zoneId][ZONE_LABEL], iCount, pointScore, g_flScoreA, g_flScoreB);
 		} else {
 			g_eZones[zoneId][ZONE_STATUS] = 0;
 			g_eZones[zoneId][ZONE_CAPTURE_TIME] = 0.0;
-			g_eZones[zoneId][ZONE_CAPTURED_TYPE] = 0;
 			g_eZones[zoneId][ZONE_PLAYER_COUNT] = 0;
+		}
+	}
+
+	// ★ 观察窗口结束后，按趋势选择主点（如果已经锁定则跳过）
+	if (!g_bPointScapMainChosenMsg && g_flPointScapMainWindowLeft <= 0.0 && g_iPointScapMainState == 0) {
+		new iSecond, iLeader;
+		new Float:flMax, Float:flSecond;
+		iLeader = pointscap_get_main_leader(iSecond, flMax, flSecond);
+
+		if (iLeader < 0 || flMax <= 0.0) {
+			g_iPointScapMainState = -1;
+			if (!g_bPointScapMainConflictMsg) {
+				g_bPointScapMainConflictMsg = true;
+				chat_print(0, "[Ascension] 本回合未能判定主点（无明显主攻点），取消主点额外加分.");
+			}
+		} else if (flSecond >= flMax) {
+			g_iPointScapMainState = -1;
+			if (!g_bPointScapMainConflictMsg) {
+				g_bPointScapMainConflictMsg = true;
+				chat_print(0, "[Ascension] 本回合主点冲突（多个点位强度相近），取消主点额外加分.");
+			}
+		} else {
+			g_iPointScapMainZone = iLeader;
+			g_iPointScapMainState = 1;
+			g_bPointScapMainChosenMsg = true;
+			chat_print(0, "[Ascension] 本回合主点确定为 %c，额外加分 %.1f.",
+				'A' + g_eZones[g_iPointScapMainZone][ZONE_LABEL], g_flPointScapMainBonus);
 		}
 	}
 	
@@ -334,11 +467,26 @@ public taskAscensionHud() {
 	
 	// 合并显示
 	new szFullHUD[256];
+	new szMain[64];
+	if (g_iPointScapMainState == -1) {
+		formatex(szMain, charsmax(szMain), "主点: 冲突/无加成");
+	} else if (g_iPointScapMainZone >= 0) {
+		formatex(szMain, charsmax(szMain), "主点: %c +%.1f", 'A' + g_eZones[g_iPointScapMainZone][ZONE_LABEL], g_flPointScapMainBonus);
+	} else {
+		new iSecond, iLeader;
+		new Float:flMax, Float:flSecond;
+		iLeader = pointscap_get_main_leader(iSecond, flMax, flSecond);
+		if (iLeader >= 0 && flMax > 0.0 && g_flPointScapMainWindowLeft > 0.0) {
+			formatex(szMain, charsmax(szMain), "主点候选: %c", 'A' + g_eZones[iLeader][ZONE_LABEL]);
+		} else {
+			formatex(szMain, charsmax(szMain), "主点: 等待判定");
+		}
+	}
 	if (g_iZoneCount == 0) {
 		format(szFullHUD, charsmax(szFullHUD), "%s^n^n[!] 无点位! 用 /creatzone 创建", szScore);
 	} else {
-		format(szFullHUD, charsmax(szFullHUD), "%s^n%s^n剩余: %.0f秒", 
-			szScore, szZones, g_flPointScapDetectTime);
+		format(szFullHUD, charsmax(szFullHUD), "%s^n%s^n%s^n主点窗口: %.0f秒  回合占点: %d  剩余: %.0f秒", 
+			szScore, szZones, szMain, g_flPointScapMainWindowLeft, g_iPointScapRoundCaptures, g_flPointScapDetectTime);
 	}
 	
 	set_hudmessage(0, 200, 220, -1.0, 0.06, 0, 0.0, 1.5, 0.1, 0.0, -1);
@@ -353,8 +501,31 @@ public ascension_roundend(bool:win_ct) {
 	
 	g_eMatchState = STATE_PREPARE;
 	remove_all_tasks();
-	
-	// 检查目标分
+
+	// ★ 综合积分：生存加分（回合结算一次，不刷屏）
+	if (g_flPointScapSurviveScore > 0.0) {
+		new iPlayers[MAX_PLAYERS], iNum;
+
+		get_players(iPlayers, iNum, "ae", "TERRORIST");
+		new iAliveT = iNum;
+		get_players(iPlayers, iNum, "ae", "CT");
+		new iAliveCT = iNum;
+
+		new HNS_TEAM:iTeamT = g_isTeamTT;
+		new HNS_TEAM:iTeamCT = HNS_TEAM:!g_isTeamTT;
+
+		new Float:flAddT = g_flPointScapSurviveScore * float(iAliveT);
+		new Float:flAddCT = g_flPointScapSurviveScore * float(iAliveCT);
+
+		pointscap_add_hns_team_score(iTeamT, flAddT);
+		pointscap_add_hns_team_score(iTeamCT, flAddCT);
+
+		if (flAddT > 0.0 || flAddCT > 0.0) {
+			chat_print(0, "[Ascension] 生存加分: T侧 +%.2f | CT侧 +%.2f", flAddT, flAddCT);
+		}
+	}
+
+	// 检查目标分（包含生存/击杀/占点的综合得分）
 	if (g_flScoreA >= float(g_iPointScapTargetScore)) {
 		ascensionFinished(1);
 		return;
@@ -362,6 +533,14 @@ public ascension_roundend(bool:win_ct) {
 		ascensionFinished(2);
 		return;
 	}
+
+	if (g_iPointScapRoundCaptures <= 0 && g_flScorePreRound[0] == g_flScoreA && g_flScorePreRound[1] == g_flScoreB) {
+		chat_print(0, "[Ascension] 本回合无人完成有效占点，判定为平回合.");
+	}
+
+	g_iPointScapMainZone = -1;
+	g_iPointScapMainState = 0;
+	g_flPointScapMainWindowLeft = 0.0;
 	
 	hns_swap_teams();
 	ExecuteForward(g_hForwards[HNS_ROUND_END], _);
@@ -406,7 +585,6 @@ public ascension_swap() {
 	for (new i = 0; i < g_iZoneCount; i++) {
 		g_eZones[i][ZONE_STATUS] = 0;
 		g_eZones[i][ZONE_CAPTURE_TIME] = 0.0;
-		g_eZones[i][ZONE_CAPTURED_TYPE] = 0;
 		g_eZones[i][ZONE_PLAYER_COUNT] = 0;
 	}
 	ResetAfkData();
@@ -427,8 +605,31 @@ public ascension_restartround() {
 // ============================================
 public ascension_killed(victim, killer) {
 	if (g_eMatchState != STATE_ENABLED) return;
-	if (getUserTeam(victim) != TEAM_TERRORIST) return;
-	if (getUserTeam(killer) != TEAM_CT) return;
+
+	if (!is_user_connected(killer) || killer == victim) return;
+
+	new TeamName:tVictim = getUserTeam(victim);
+	new TeamName:tKiller = getUserTeam(killer);
+	if ((tVictim != TEAM_TERRORIST && tVictim != TEAM_CT) || (tKiller != TEAM_TERRORIST && tKiller != TEAM_CT)) {
+		return;
+	}
+
+	// ★ 综合积分：击杀加分（默认很小，避免击杀压过占点）
+	if (g_flPointScapKillScore > 0.0) {
+		new HNS_TEAM:iKillTeam = pointscap_get_hns_team_by_cs_team(tKiller);
+		pointscap_add_hns_team_score(iKillTeam, g_flPointScapKillScore);
+	}
+
+	// ★ 击杀可能导致直接达标
+	if (g_flScoreA >= float(g_iPointScapTargetScore)) {
+		remove_all_tasks();
+		ascensionFinished(1);
+		return;
+	} else if (g_flScoreB >= float(g_iPointScapTargetScore)) {
+		remove_all_tasks();
+		ascensionFinished(2);
+		return;
+	}
 	
 	new iTPlayers[MAX_PLAYERS], iTNum;
 	get_players(iTPlayers, iTNum, "ae", "TERRORIST");
@@ -581,7 +782,6 @@ stock remove_all_tasks() {
 	if (task_exists(TASK_POINTSCAP_HUD)) remove_task(TASK_POINTSCAP_HUD);
 	if (task_exists(TASK_POINTSCAP_FALLBACK)) remove_task(TASK_POINTSCAP_FALLBACK);
 	if (task_exists(TASK_POINTSCAP_FORCE)) remove_task(TASK_POINTSCAP_FORCE);
-	if (task_exists(TASK_POINTSCAP_ROUNDTIMER)) remove_task(TASK_POINTSCAP_ROUNDTIMER);
 }
 
 // ============================================

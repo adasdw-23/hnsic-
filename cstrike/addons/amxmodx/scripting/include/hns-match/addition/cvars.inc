@@ -27,6 +27,10 @@ enum _: CVARS
 	POINTSCAP_DETECT_TIME,
 	POINTSCAP_KNIFE_TIME,
 	Float:POINTSCAP_STAY_TIME,
+	Float:POINTSCAP_MAIN_WINDOW,
+	Float:POINTSCAP_MAIN_BONUS,
+	Float:POINTSCAP_KILL_SCORE,
+	Float:POINTSCAP_SURVIVE_SCORE,
 	Float:POINTSCAP_SCORE_6,
 	Float:POINTSCAP_SCORE_5,
 	Float:POINTSCAP_SCORE_4,
@@ -160,6 +164,18 @@ stock cvars_init() {
 
 	pCvar[POINTSCAP_STAY_TIME] = _:create_cvar("hns_pointscap_stay_time", "1.0", FCVAR_NONE, "PointScap stay time to capture", true, 0.5, true, 5.0);
 	bind_pcvar_float(_:pCvar[POINTSCAP_STAY_TIME], g_flPointScapStayTime);
+
+	pCvar[POINTSCAP_MAIN_WINDOW] = _:create_cvar("hns_pointscap_main_window", "60.0", FCVAR_NONE, "PointScap dynamic main zone detect window", true, 30.0, true, 90.0);
+	bind_pcvar_float(_:pCvar[POINTSCAP_MAIN_WINDOW], g_flPointScapMainWindow);
+
+	pCvar[POINTSCAP_MAIN_BONUS] = _:create_cvar("hns_pointscap_main_bonus", "1.0", FCVAR_NONE, "PointScap dynamic main zone bonus", true, 0.0, true, 5.0);
+	bind_pcvar_float(_:pCvar[POINTSCAP_MAIN_BONUS], g_flPointScapMainBonus);
+
+	pCvar[POINTSCAP_KILL_SCORE] = _:create_cvar("hns_pointscap_kill_score", "0.1", FCVAR_NONE, "PointScap kill score", true, 0.0, true, 2.0);
+	bind_pcvar_float(_:pCvar[POINTSCAP_KILL_SCORE], g_flPointScapKillScore);
+
+	pCvar[POINTSCAP_SURVIVE_SCORE] = _:create_cvar("hns_pointscap_survive_score", "0.05", FCVAR_NONE, "PointScap survive score per alive player at round end", true, 0.0, true, 2.0);
+	bind_pcvar_float(_:pCvar[POINTSCAP_SURVIVE_SCORE], g_flPointScapSurviveScore);
 
 	// ★ 6人点已移除，统一使用5人分数 (hns_pointscap_score_5)
 

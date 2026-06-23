@@ -193,7 +193,6 @@ new g_msgMoney;
 #define TASK_POINTSCAP_HUD     67892
 #define TASK_POINTSCAP_FALLBACK 67893
 #define TASK_POINTSCAP_FORCE   67894
-#define TASK_POINTSCAP_ROUNDTIMER 67895
 #define TASK_FREEZE            93761
 #define MAX_ZONES 10
 
@@ -205,9 +204,20 @@ new bool:g_bReGameDLLRoundFired; // ReGameDLL 钩子已触发本回合事件，A
 new Float:g_flPointScapScore5;
 new Float:g_flPointScapScore4;
 new Float:g_flPointScapScore3;
+new Float:g_flPointScapMainWindow;
+new Float:g_flPointScapMainBonus;
+new Float:g_flPointScapMainWindowLeft;
+new Float:g_flPointScapKillScore;
+new Float:g_flPointScapSurviveScore;
 new g_iPointScapKnifeBonus;
 new g_iPointScapTargetScore;
 new g_iPointScapVampInit;
+new g_iPointScapMainZone;
+new g_iPointScapMainState; // 0=未判定 1=已锁定 -1=冲突无主点
+new g_iPointScapRoundCaptures;
+new Float:g_flPointScapMainTrend[MAX_ZONES];
+new bool:g_bPointScapMainConflictMsg;
+new bool:g_bPointScapMainChosenMsg;
 
 // ★ 回合制模式 (MODE_ROUNDS)
 new g_iRoundsMaxRounds = 10;
@@ -230,7 +240,7 @@ enum _:ZONE_DATA {
 	ZONE_TYPE,            // 点位类型 (3=3人, 4=4人, 5=5人)
 	Float:ZONE_SCORE,     // 该点位分数
 	ZONE_CAPTURED,        // 是否已占领
-	Float:ZONE_CAPTURE_TIME, // 占点进度/占领用时
+	Float:ZONE_CAPTURE_TIME, // 占领时间
 	ZONE_STATUS,          // 0=未占, 1=已占, 2=已锁定
 	ZONE_CAPTURED_TYPE,   // 3=3人点, 4=4人点, 5=5人点
 	ZONE_PLAYER_COUNT,    // 区域内玩家数
