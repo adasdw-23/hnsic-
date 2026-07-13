@@ -1,6 +1,9 @@
 new HookChain:fwdResetMaxSpeed;
 new bool:g_bHideKnifeModel = false;
 
+// ★ FIX: 飞行手雷查询 native（由 HnsMatchFlyNade.sma 提供）
+native hns_flynade_has_nade(id);
+
 enum
 {
 	LAST_FLASH_NO = 0,
@@ -71,6 +74,10 @@ public hns_setrole(id)
 		{
 			rg_give_item(id, "weapon_knife");
 			rg_set_user_footsteps(id, false);
+			// ★ FIX: 如果该CT拥有飞行手雷标记，在清空装备后重新补发HE
+			if (hns_flynade_has_nade(id)) {
+				rg_give_item(id, "weapon_hegrenade");
+			}
 		}
 	}
 

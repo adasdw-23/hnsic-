@@ -13,7 +13,7 @@ public pub_start() {
 	set_semiclip(SEMICLIP_ON, true);
 	set_cvars_mode(MODE_PUB);
 	loadMapCFG();
-	g_iSettings[FLASH] = 1;
+	// ★ FIX: 删除第二次 FLASH=1，让 loadMapCFG 的 Boost 设置生效
 
 	hns_restart_round(0.5);
 }

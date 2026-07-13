@@ -5,6 +5,9 @@
 #define _afk_included
 
 const TASK_AFK = 77832;
+const TASK_AFK_STOP = 77833;
+
+#define AFK_STOP_SECONDS 30
 
 enum _:AfkData_s {
 	bool:is_afk,
@@ -13,6 +16,7 @@ enum _:AfkData_s {
 
 new eAfkData[MAX_PLAYERS + 1][AfkData_s];
 new iPlayersAfk;
+new bool:g_bAllAfkWarned;
 
 new Float:flAfkOrigin[MAX_PLAYERS + 1][3];
 
@@ -45,7 +49,15 @@ public taskCheckAfk() {
 	}
 
 	if (iPlayersAfk) {
-		// ★ 不再自动暂停，只通知管理员有AFK玩家
+		// 检查是否所有比赛玩家都挂机
+		if (iPlayersAfk >= iNum && iNum > 0) {
+			if (!g_bAllAfkWarned) {
+				chat_print(0, "[AFK] 所有人都挂机了！%d秒后自动停止比赛...", AFK_STOP_SECONDS);
+				g_bAllAfkWarned = true;
+				set_task(float(AFK_STOP_SECONDS), "taskAfkAutoStop", TASK_AFK_STOP);
+			}
+		}
+
 		new szNames[256], iLen;
 		for (new i; i < iNum; i++) {
 			new pid = iPlayers[i];
@@ -58,8 +70,33 @@ public taskCheckAfk() {
 		chat_print(0, "[AFK] %d 挂机玩家: %s — 使用 /pause 暂停比赛", iPlayersAfk, szNames);
 		set_task(5.0, "taskCheckAfk");
 	} else {
+		// 有人回来了，取消自动停止
+		if (g_bAllAfkWarned) {
+			g_bAllAfkWarned = false;
+			if (task_exists(TASK_AFK_STOP))
+				remove_task(TASK_AFK_STOP);
+			chat_print(0, "[AFK] 玩家已恢复，取消自动停止比赛");
+		}
 		set_task(5.0, "taskCheckAfk");
 	}
+}
+
+// 所有人挂机30秒后自动停止比赛
+public taskAfkAutoStop() {
+	if (g_eMatchState != STATE_ENABLED) return;
+
+	chat_print(0, "[AFK] 所有人挂机超过%d秒，比赛已自动停止", AFK_STOP_SECONDS);
+
+	// 停止当前比赛模式
+	if (g_iCurrentMode == MODE_MIX) {
+		mix_stop();
+	} else if (g_iCurrentMode == MODE_KNIFE) {
+		cmdStop(0);
+	} else {
+		cmdStop(0);
+	}
+
+	g_bAllAfkWarned = false;
 }
 
 public taskAfk() {
@@ -115,8 +152,13 @@ ResetAfkData() {
 	if(task_exists(TASK_AFK)) {
 		remove_task(TASK_AFK);
 	}
-		
+
+	if(task_exists(TASK_AFK_STOP)) {
+		remove_task(TASK_AFK_STOP);
+	}
+
 	iPlayersAfk = 0;
+	g_bAllAfkWarned = false;
 
 	new iPlayers[MAX_PLAYERS], iNum;
 	get_players(iPlayers, iNum, "ch");

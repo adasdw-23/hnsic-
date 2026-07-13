@@ -1341,12 +1341,12 @@ public task_start_match() {
     
     new szModeName[16];
     switch (g_iSelectedMode) {
-        case VOTE_MR:        { copy(szModeName, charsmax(szModeName), "mr"); }
-        case VOTE_TIMER:     { copy(szModeName, charsmax(szModeName), "timer"); }
-        case VOTE_ASCENSION: { copy(szModeName, charsmax(szModeName), "ascension"); }
-        case VOTE_VAMPIRE:   { copy(szModeName, charsmax(szModeName), "vampire"); }
-        case VOTE_ROUNDS:    { copy(szModeName, charsmax(szModeName), "rounds"); }
-        case VOTE_DUEL:      { copy(szModeName, charsmax(szModeName), "duel"); }
+        case VOTE_MR:        { copy(szModeName, charsmax(szModeName), "mr"); break; }
+        case VOTE_TIMER:     { copy(szModeName, charsmax(szModeName), "timer"); break; }
+        case VOTE_ASCENSION: { copy(szModeName, charsmax(szModeName), "ascension"); break; }
+        case VOTE_VAMPIRE:   { copy(szModeName, charsmax(szModeName), "vampire"); break; }
+        case VOTE_ROUNDS:    { copy(szModeName, charsmax(szModeName), "rounds"); break; }
+        case VOTE_DUEL:      { copy(szModeName, charsmax(szModeName), "duel"); break; }
     }
     
     client_print(0, print_chat, "[AI Teams] 比赛启动! 模式: %s, 地图: %s", szModeName, g_szSelectedMap);

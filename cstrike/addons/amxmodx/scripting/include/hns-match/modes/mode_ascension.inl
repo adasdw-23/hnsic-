@@ -80,14 +80,17 @@ public ascension_roundstart() {
 	}
 	
 	g_eMatchState = STATE_ENABLED;
-	pointscap_load_zones();
+	// ★ 不重新加载点位，只在 ascension_start 加载一次
+	// 原点位数据不变，仅重置回合状态
 	
-	server_print("[Ascension] roundstart loaded %d zones", g_iZoneCount);
-	for (new i = 0; i < g_iZoneCount; i++) {
-		server_print("[Ascension] Zone %d: label=%c type=%d enabled=%d mins=(%.0f,%.0f,%.0f) maxs=(%.0f,%.0f,%.0f)",
-			i, 'A' + g_eZones[i][ZONE_LABEL], g_eZones[i][ZONE_TYPE], g_eZones[i][ZONE_ENABLED],
-			g_eZones[i][ZONE_MINS][0], g_eZones[i][ZONE_MINS][1], g_eZones[i][ZONE_MINS][2],
-			g_eZones[i][ZONE_MAXS][0], g_eZones[i][ZONE_MAXS][1], g_eZones[i][ZONE_MAXS][2]);
+	server_print("[Ascension] roundstart: using %d preloaded zones", g_iZoneCount);
+	
+	// ★ 调试：打印每个zone的状态
+	for (new z = 0; z < g_iZoneCount; z++) {
+		server_print("[Ascension] RoundStart Zone %d: label=%c type=%d enabled=%d mins=(%.0f,%.0f,%.0f) maxs=(%.0f,%.0f,%.0f)",
+			z, 'A' + g_eZones[z][ZONE_LABEL], g_eZones[z][ZONE_TYPE], g_eZones[z][ZONE_ENABLED],
+			g_eZones[z][ZONE_MINS][0], g_eZones[z][ZONE_MINS][1], g_eZones[z][ZONE_MINS][2],
+			g_eZones[z][ZONE_MAXS][0], g_eZones[z][ZONE_MAXS][1], g_eZones[z][ZONE_MAXS][2]);
 	}
 	
 	g_bPointScapDetectFirstRun = true; // ★ 重置首次运行标记
@@ -205,6 +208,13 @@ public taskAscensionDetect() {
 	if (g_bPointScapDetectFirstRun) {
 		g_bPointScapDetectFirstRun = false;
 		server_print("[Ascension] 检测启动: zones=%d T=%d time=%.0f", g_iZoneCount, iTNum, g_flPointScapDetectTime);
+		// ★ 打印每个zone的详细信息
+		for (new z = 0; z < g_iZoneCount; z++) {
+			server_print("[Ascension] Zone %d: label=%c type=%d enabled=%d captured=%d mins=(%.0f,%.0f,%.0f) maxs=(%.0f,%.0f,%.0f)",
+				z, 'A' + g_eZones[z][ZONE_LABEL], g_eZones[z][ZONE_TYPE], g_eZones[z][ZONE_ENABLED], g_eZones[z][ZONE_CAPTURED],
+				g_eZones[z][ZONE_MINS][0], g_eZones[z][ZONE_MINS][1], g_eZones[z][ZONE_MINS][2],
+				g_eZones[z][ZONE_MAXS][0], g_eZones[z][ZONE_MAXS][1], g_eZones[z][ZONE_MAXS][2]);
+		}
 	}
 	
 	if (iTNum == 0) return;

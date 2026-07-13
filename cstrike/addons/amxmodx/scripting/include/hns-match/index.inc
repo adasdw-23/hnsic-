@@ -43,6 +43,7 @@
 #include <hns-match/gameplay/gameplay_hns.inc>
 #include <hns-match/gameplay/gameplay_knife.inc>
 #include <hns-match/gameplay/gameplay_training.inc>
+#include <hns-match/gameplay/gameplay_ai_signup.inc>
 
 #include <hns-match/modes/mode_training.inl>
 #include <hns-match/modes/mode_pub.inl>

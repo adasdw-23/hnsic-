@@ -216,6 +216,7 @@ new g_iRoundsScoreT;
 new g_iRoundsScoreCT;
 new g_iRoundsTotalPlayed;
 new bool:g_bRoundsManual = false;
+new bool:g_bRoundsSwapSides = true;  // ★ 回合制是否半场换边 (默认true=换边)
 new g_iPointScapDetectTime;
 new g_iPointScapKnifeTime;
 new g_iPointScapSoundCapture;
@@ -261,3 +262,4 @@ new g_iDesertCount[MAX_PLAYERS + 1];
 
 // === Knife ViewModel Settings ===
 new bool:g_bKnifeViewModel[MAX_PLAYERS + 1];  // 每个玩家是否显示刀模型（true=显示, false=隐藏）
+new bool:g_bKnifeSkipSpec = false;  // ★ AI报名恢复期间跳过观战拉人

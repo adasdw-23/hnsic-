@@ -12,7 +12,56 @@ public delayed_mode() {
 	PDS_GetCell("match_status", g_iMatchStatus);
 	PDS_GetCell("match_rules", g_iCurrentRules);
 
+	// ★ v5.6 FIX: AI 系统换图后自动启动比赛
+	// AI 系统在换图前写入 hns_ai_match_start.cfg，但 delayed_mode 从 PDS 读到旧状态
+	// 导致直接进训练模式，比赛永远不启动
+	new szAICfg[256];
+	get_configsdir(szAICfg, charsmax(szAICfg));
+	add(szAICfg, charsmax(szAICfg), "/hns_ai_match_start.cfg");
+	if (file_exists(szAICfg)) {
+		// 解析 AI 配置获取模式
+		new iAIMode = -1;
+		new f = fopen(szAICfg, "r");
+		if (f) {
+			new szLine[128], szKey[32], szVal[32];
+			while (!feof(f) && fgets(f, szLine, charsmax(szLine))) {
+				trim(szLine);
+				parse(szLine, szKey, charsmax(szKey), szVal, charsmax(szVal));
+				if (equal(szKey, "hns_match_mode")) iAIMode = str_to_num(szVal);
+			}
+			fclose(f);
+		}
+
+		// 加载玩家列表
+		PDS_GetString("playerslist", g_szBuffer, charsmax(g_szBuffer));
+		if (g_szBuffer[0]) {
+			loadPlayers();
+		}
+
+		// 根据 AI 模式设置比赛规则
+		// AI mode: 0=MR 1=Timer 2=Duel 3=PointScap 4=Vampire 5=Rounds
+		switch (iAIMode) {
+			case 0: g_iCurrentRules = RULES_MR;
+			case 1: g_iCurrentRules = RULES_TIMER;
+			case 2: g_iCurrentRules = RULES_DUEL;
+			case 3: g_iCurrentRules = RULES_POINTSCAP;
+			case 4: g_iCurrentRules = RULES_VAMP;
+			case 5: g_iCurrentMode = MODE_ROUNDS;
+			default: g_iCurrentRules = RULES_MR;
+		}
+		g_iMatchStatus = MATCH_MAPPICK;
+		g_iCurrentMode = MODE_TRAINING;
+		g_iCurrentGameplay = GAMEPLAY_HNS;
+
+		server_print("[HNS] AI match start detected, mode=%d, players=%d", iAIMode, g_szBuffer[0] ? ArraySize(g_aPlayersLoadData) : 0);
+
+		// 删除配置文件避免重复触发
+		delete_file(szAICfg);
+	}
+
 	if (hns_is_knife_map()) {
+		// ★ v5.6: 搬運 v2.1.0 邏輯 — 拼刀圖只進訓練模式，不自動啟動拼刀
+		// 管理員通過菜單 /kniferound 手動啟動拼刀輪
 		g_iMatchStatus = MATCH_NONE;
 		training_start();
 	} else if (g_iMatchStatus == MATCH_MAPPICK || g_iMatchStatus == MATCH_WAITCONNECT) {
@@ -134,16 +183,17 @@ public Task_CheckTime() {
 		return PLUGIN_HANDLED;
 	}
 
+	// ★ 训练模式/拼刀地图不自动切换死斗
+	if (g_iCurrentMode == MODE_TRAINING || hns_is_knife_map()) {
+		return PLUGIN_HANDLED;
+	}
+
 	new iPlayers[MAX_PLAYERS], iNum;
 	get_players(iPlayers, iNum, "ch");
 
 	if (iNum == 0) {
-		// if (hns_is_knife_map())
-		// {
-		// 	server_cmd("changelevel boost_qube02");
-		// }
 		dm_start();
 	}
-	
+
 	return PLUGIN_CONTINUE;
 }

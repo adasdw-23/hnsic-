@@ -5,15 +5,14 @@
 
 // === SemiClip System ===
 // 仅同队玩家之间互相穿透，并支持按 hns-maps.ini 自动识别 skill 图
+// v5.7: 改用 FM_PlayerPreThink + SOLID_NOT 方式，不依赖 ReGameDLL
 
 #define SEMICLIP_MODE_OFF 0
 #define SEMICLIP_MODE_ON 1
 #define SEMICLIP_MODE_AUTO 2
 
-new g_iSemiClipEnabled = 1; // 兼容旧 cvar：0=总关闭, 1=允许按模式运行
-new g_iSemiClipMode = SEMICLIP_MODE_AUTO; // 0=关闭, 1=开启, 2=自动(skill 图开启)
-
-// 玩家个人开关
+new g_iSemiClipEnabled = 1;
+new g_iSemiClipMode = SEMICLIP_MODE_AUTO;
 new bool:g_bPlayerSemiClip[MAX_PLAYERS + 1] = {true, ...};
 
 // === Initialization ===
@@ -86,6 +85,11 @@ stock bool:semiclip_should_ignore_collision(id, other) {
 		return false;
 	}
 
+	// ★ NOCLIP 虚体模式：无条件穿透
+	if (get_entvar(id, var_movetype) == MOVETYPE_NOCLIP || get_entvar(other, var_movetype) == MOVETYPE_NOCLIP) {
+		return true;
+	}
+
 	if (!semiclip_should_apply_player(id) || !semiclip_should_apply_player(other)) {
 		return false;
 	}
@@ -100,6 +104,7 @@ stock bool:semiclip_should_ignore_collision(id, other) {
 	return true;
 }
 
+// === FM_ShouldCollide 兜底 ===
 public fwSemiClipShouldCollide(id, other) {
 	if (!semiclip_should_ignore_collision(id, other)) {
 		return FMRES_IGNORED;
@@ -109,7 +114,7 @@ public fwSemiClipShouldCollide(id, other) {
 	return FMRES_SUPERCEDE;
 }
 
-// 旧接口保留为空，避免其他地方误调用时报错
+// 旧接口保留为空（HnsMatchSemiClip.amxx 已接管 SOLID_NOT 穿透）
 stock semiclip_prethink(id) {}
 stock semiclip_postthink(id) {}
 

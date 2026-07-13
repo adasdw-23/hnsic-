@@ -16,6 +16,25 @@ public plugin_cfg() {
 
 	if (!dir_exists(g_szLogPath))
 		mkdir(g_szLogPath);
+
+	// ★ 检测待启动模式（拼刀选人后换图 → 自动启动比赛）
+	autoStartPendingMode();
+
+	// FPS优化: 延迟强制设置sys_ticrate, 确保在所有cfg执行完后生效, 换图不丢失
+	set_task(5.0, "taskForceTicrate");
+	set_task(10.0, "taskForceTicrate");
+	set_task(30.0, "taskForceTicrate");
+}
+
+public taskForceTicrate() {
+	new pCvar = get_cvar_pointer("sys_ticrate");
+	if (pCvar) {
+		new szVal[16];
+		get_pcvar_string(pCvar, szVal, charsmax(szVal));
+		if (str_to_float(szVal) < 500.0) {
+			set_pcvar_string(pCvar, "1000");
+		}
+	}
 }
 
 public registerMode() {
@@ -25,8 +44,11 @@ public registerMode() {
 	dllfunc(DLLFunc_Spawn, g_iHostageEnt);
 }
 
+// v5.5: 坠落伤害显示
+new Float:g_fPendingFallDmg[MAX_PLAYERS + 1];
+
 public plugin_init() {
-	g_PluginId = register_plugin("Hide'n'Seek Match System", "5.0.0", "OpenHNS + HnsICMatch");
+	g_PluginId = register_plugin("Hide'n'Seek Match System", "5.0.0", "LINNA (GTRHNS)");
 
 	rh_get_mapname(g_szMapName, charsmax(g_szMapName));
 
@@ -38,6 +60,10 @@ public plugin_init() {
 	pointscap_editor_init();
 	semiclip_init();
 	hnsmenu_init();
+	ais_init();
+
+	// ★ 地图选择菜单 (拼刀选人后)
+	register_menucmd(register_menuid("MapPickMenu"), 1023, "handleMapPickMenu");
 
 	// === Training Tools — 已由 HnsMatchTraining.amxx 独立接管 ===
 
@@ -45,6 +71,16 @@ public plugin_init() {
 	register_clcmd("say /knife", "toggleKnifeViewModel");
 	register_clcmd("say_team /knife", "toggleKnifeViewModel");
 	register_concmd("hns_knife_viewmodel", "cmdKnifeViewModel", ADMIN_USER, "Toggle knife viewmodel (0=hide, 1=show)");
+
+	// ★ AI报名系统
+	register_clcmd("say /join", "aisJoin");
+	register_clcmd("say_team /join", "aisJoin");
+	register_clcmd("say /unjoin", "aisUnjoin");
+	register_clcmd("say /re", "aisToggleRe");
+	register_clcmd("say_team /re", "aisToggleRe");
+	register_clcmd("say /teams", "aisShowTeams");
+	register_clcmd("say_team /teams", "aisShowTeams");
+	register_clcmd("say_team /unjoin", "aisUnjoin");
 
 	// === Hook System — 已由 HnsMatchTraining.amxx 独立接管 ===
 
@@ -57,11 +93,11 @@ public plugin_init() {
 	RegisterHookChain(RG_CSGameRules_RestartRound, "rgRestartRound", false);
 	RegisterHookChain(RG_CSGameRules_OnRoundFreezeEnd, "rgOnRoundFreezeEnd", true);
 	RegisterHookChain(RG_CSGameRules_FlPlayerFallDamage, "rgFlPlayerFallDamage", true);
+    RegisterHookChain(RG_CSGameRules_FlPlayerFallDamage, "rgFlPlayerFallDamagePre", false);
 	RegisterHookChain(RG_CBasePlayer_Spawn, "rgPlayerSpawn", true);
 	RegisterHookChain(RG_CBasePlayer_Killed, "rgPlayerKilled", true);
 	RegisterHookChain(RG_PlayerBlind, "rgPlayerBlind", false);
 	RegisterHookChain(RG_CBasePlayer_MakeBomber, "rgPlayerMakeBomber", false);
-
 	// SemiClip is now handled by HnsMatchSemiClip.amxx (Fakemeta ShouldCollide)
 	// Do NOT register PreThink/PostThink here to avoid conflicts.
 	// Keep the menu and commands for admin control.
@@ -82,7 +118,7 @@ public plugin_init() {
 	// 仅注册 hnsmenu.inc 中未包含的菜单：
 	register_menucmd(register_menuid("HnsICTestTools"), (1<<0)|(1<<1)|(1<<9), "testToolsMenuHandler");
 	register_menucmd(register_menuid("HnsICMoreSettings"), (1<<0)|(1<<1)|(1<<9), "moreSettingsMenuHandler");
-	register_menucmd(register_menuid("HnsRoundsConfig"), (1<<0)|(1<<1)|(1<<2)|(1<<3)|(1<<4)|(1<<5)|(1<<9), "roundsConfigMenuHandler");
+	register_menucmd(register_menuid("HnsRoundsConfig"), (1<<0)|(1<<1)|(1<<2)|(1<<3)|(1<<4)|(1<<5)|(1<<6)|(1<<9), "roundsConfigMenuHandler");
 
 	// One-click helper/owner auth
 	register_clcmd("say /fuzhu", "hnsHelperAuth");
@@ -98,7 +134,10 @@ public plugin_init() {
 	register_clcmd("say /listzones", "cmdListZones");
 	register_clcmd("say_team /listzones", "cmdListZones");
 	register_clcmd("say /savezones", "cmdSaveZones");
-	register_clcmd("say_team /savezones", "cmdSaveZones");
+    register_clcmd("say_team /savezones", "cmdSaveZones");
+    // v5.5: 重新加载点位配置
+    register_clcmd("say /reloadzones", "cmdReloadZones");
+    register_clcmd("say_team /reloadzones", "cmdReloadZones");
 
 	RegisterHam(Ham_Weapon_PrimaryAttack, "weapon_knife", "Knife_PrimaryAttack", false);
 	RegisterHam(Ham_Weapon_SecondaryAttack, "weapon_knife", "Knife_SecondaryAttack", false);
@@ -107,6 +146,10 @@ public plugin_init() {
 	register_message(get_user_msgid("ShowMenu"), "msgShowMenu");
 	register_message(get_user_msgid("VGUIMenu"), "msgVguiMenu");
 	register_message(get_user_msgid("HideWeapon"), "msgHideWeapon");
+
+	// ★ 隐藏敌人血量 (StatusIcon + ScoreInfo)
+	register_message(get_user_msgid("StatusIcon"), "msgStatusIcon");
+	register_message(get_user_msgid("ScoreInfo"), "msgScoreInfo");
 
 	unregister_forward(FM_Spawn, g_iRegisterSpawn, 1);
 	
@@ -264,6 +307,9 @@ public rgRoundEnd(WinStatus:status, ScenarioEventEndRound:event, Float:tmDelay) 
         return HC_SUPERCEDE;
     }
 
+	// ★ FIX: 在 rgRoundEnd 里设置标志，防止 logEventRoundEnd fallback 重复触发 rounds_roundend
+	g_bReGameDLLRoundFired = true;
+
 	ExecuteForward(g_hForwards[HNS_ROUND_END]);
 
 	if (g_GPFuncs[g_iCurrentGameplay][GP_ROUNDEND])
@@ -326,12 +372,10 @@ public logEventRoundStart() {
 	// ReGameDLL 已处理则跳过
 	if (g_bReGameDLLRoundFired) {
 		g_bReGameDLLRoundFired = false;
-		server_print("[HNS-DEBUG] logEventRoundStart: Skipped (ReGameDLL handled it)");
 		return;
 	}
 
-	server_print("[HNS-DEBUG] logEventRoundStart: AMXX fallback active! mode=%d state=%d zones=%d",
-		g_iCurrentMode, g_eMatchState, g_iZoneCount);
+		server_print("[Debug] RoundStart: mode=%d, state=%d, zones=%d", g_iCurrentMode, g_eMatchState, g_iZoneCount);
 
 	// Fallback: 直接调用 roundstart 逻辑
 	set_task(1.0, "taskDestroyBreakables");
@@ -354,11 +398,9 @@ public taskAmxxFreezeEnd() {
 	// ReGameDLL 已处理则跳过
 	if (g_bReGameDLLRoundFired) {
 		g_bReGameDLLRoundFired = false;
-		server_print("[HNS-DEBUG] taskAmxxFreezeEnd: Skipped (ReGameDLL handled it)");
 		return;
 	}
-	server_print("[HNS-DEBUG] taskAmxxFreezeEnd: AMXX fallback triggering freezeend! mode=%d state=%d",
-		g_iCurrentMode, g_eMatchState);
+		server_print("[Debug] FreezeEnd: mode=%d, state=%d", g_iCurrentMode, g_eMatchState);
 	if (g_ModFuncs[g_iCurrentMode][MODEFUNC_FREEZEEND])
 		ExecuteForward(g_ModFuncs[g_iCurrentMode][MODEFUNC_FREEZEEND], _);
 }
@@ -389,11 +431,37 @@ public logEventRoundEnd() {
 		ExecuteForward(g_ModFuncs[g_iCurrentMode][MODEFUNC_ROUNDEND], _, win_ct);
 }
 
-public rgFlPlayerFallDamage(const id) {
-	new Float:flDmg = Float:GetHookChainReturn(ATYPE_FLOAT);
+// v5.5: 坠落伤害显示 - 预钩子保存当前血量
+public rgFlPlayerFallDamagePre(const id) {
+    g_fPendingFallDmg[id] = 0.0;
+}
 
-	if (g_ModFuncs[g_iCurrentMode][MODEFUNC_FALLDAMAGE])
-		ExecuteForward(g_ModFuncs[g_iCurrentMode][MODEFUNC_FALLDAMAGE], _, id, flDmg);
+public rgFlPlayerFallDamage(const id) {
+    new Float:flDmg = Float:GetHookChainReturn(ATYPE_FLOAT);
+    
+    // v5.5: 坠落伤害显示（仅对玩家显示，忽略0伤害）
+    if (flDmg > 0.0 && is_user_connected(id)) {
+        g_fPendingFallDmg[id] = flDmg;
+        set_task(0.05, "task_show_fall_damage", id);
+    }
+
+    if (g_ModFuncs[g_iCurrentMode][MODEFUNC_FALLDAMAGE])
+        ExecuteForward(g_ModFuncs[g_iCurrentMode][MODEFUNC_FALLDAMAGE], _, id, flDmg);
+}
+
+// v5.5: 坠落伤害DHUD显示
+public task_show_fall_damage(const id) {
+    if (!is_user_connected(id)) return;
+    if (g_fPendingFallDmg[id] <= 0.0) return;
+    
+    new iDmg = floatround(g_fPendingFallDmg[id]);
+    new iHp = get_user_health(id);
+    g_fPendingFallDmg[id] = 0.0;
+    
+    if (iHp <= 0) return;  // 玩家已死亡
+    
+    set_dhudmessage(255, 80, 80, -1.0, 0.85, 0, 0.0, 2.0, 0.5, 0.5);
+    show_dhudmessage(id, "-%d HP^n(摔伤)", iDmg);
 }
 
 public rgPlayerSpawn(id) {
@@ -405,10 +473,24 @@ public rgPlayerSpawn(id) {
 		ExecuteForward(g_GPFuncs[g_iCurrentGameplay][GP_SETROLE], _, id);
 	}
 
+	// ★ 练习模式：延迟给 USP
+	if (g_iCurrentMode == MODE_TRAINING) {
+		client_print(id, print_chat, "[HNS] v7.0 spawn, giving USP in 0.5s...");
+		set_task(0.5, "taskTrainingGiveUsp", id + 1000);
+	}
+
 	// 检查刀模型显示设置
 	if (!g_bKnifeViewModel[id] || !g_iSettings[KNIFE_VIEWMODEL_ENABLE]) {
 		set_task(0.1, "checkKnifeViewModel", id);
 	}
+}
+
+public taskTrainingGiveUsp(taskid) {
+	new id = taskid - 1000;
+	if (!is_user_alive(id)) return;
+	// ★ FIX: 不再用 sv_cheats，改用 rg_give_item
+	rg_give_item(id, "weapon_usp");
+	rg_set_user_bpammo(id, WEAPON_USP, 100);
 }
 
 public rgPlayerKilled(victim, attacker) {
@@ -444,6 +526,8 @@ public client_disconnected(id) {
 	arrayset(eAfkData[id], 0, AfkData_s);
 	arrayset(flAfkOrigin[id], 0.0, sizeof(flAfkOrigin[]));
 	g_bSurrenderVoted[id] = false;
+
+	aisOnDisconnect(id);
 }
 
 public Knife_PrimaryAttack(ent)
@@ -550,6 +634,45 @@ public msgHideWeapon(msgid, dest, id) {
 		const money = (1 << 5);
 		set_msg_arg_int(1, ARG_BYTE, get_msg_arg_int(1) | money);
 	}
+}
+
+// ★ 隐藏敌人血量: 拦截 StatusIcon 中的 health 图标
+public msgStatusIcon(msgid, dest, id) {
+	new iMode = get_pcvar_num(get_cvar_pointer("hns_hide_enemy_hp"));
+	if (iMode == 0) return PLUGIN_CONTINUE;
+
+	// iMode=1: 仅比赛模式; iMode=2: 始终
+	if (iMode == 1 && g_iCurrentMode != MODE_MIX) return PLUGIN_CONTINUE;
+
+	new szIcon[16];
+	get_msg_arg_string(1, szIcon, charsmax(szIcon));
+
+	// health_icon_1/2/3/4 = 敌人血量显示
+	if (containi(szIcon, "health_icon") != -1) {
+		return PLUGIN_HANDLED;  // 阻止显示
+	}
+
+	return PLUGIN_CONTINUE;
+}
+
+// ★ 隐藏 Tab 计分板中的敌人血量
+public msgScoreInfo(msgid, dest, id) {
+	new iMode = get_pcvar_num(get_cvar_pointer("hns_hide_enemy_hp"));
+	if (iMode == 0) return PLUGIN_CONTINUE;
+
+	if (iMode == 1 && g_iCurrentMode != MODE_MIX) return PLUGIN_CONTINUE;
+
+	// ScoreInfo: arg1=玩家ID, arg3=血量
+	new iPlayer = get_msg_arg_int(1);
+	if (iPlayer == id) return PLUGIN_CONTINUE; // 自己的血量正常显示
+
+	new iMyTeam = get_user_team(id);
+	new iTheirTeam = get_user_team(iPlayer);
+	if (iMyTeam == iTheirTeam) return PLUGIN_CONTINUE; // 队友血量正常显示
+
+	// 隐藏敌人血量: 显示为 0
+	set_msg_arg_int(3, ARG_SHORT, 0);
+	return PLUGIN_CONTINUE;
 }
 
 bool:shouldAutoJoin(id) {
@@ -755,6 +878,8 @@ public client_putinserver(id) {
 	deserter_load(id);
 	hns_load_owner_list(id);
 	hnsmenu_client_putinserver(id);
+
+	aisOnPutInServer(id);
 }
 
 // === SemiClip: PreThink/PostThink ===
@@ -789,7 +914,12 @@ public mainMenuHandler(id, key) {
 	} else if (key == 2) {                        // Key 3: 选择模式
 		menuSelectMode(id);
 	} else if (key == 3) {                        // Key 4: 训练工具
-		showTrainingMenu(id);
+		if (g_iCurrentMode != MODE_TRAINING) {
+			client_print(id, print_chat, "[HNS] 训练工具仅在训练模式下可用！");
+			showMainMenu(id);
+		} else {
+			showTrainingMenu(id);
+		}
 	} else if (key == 4) {                        // Key 5: 个人设置
 		showPersonalMenu(id);
 	} else if (key == 5) {                        // Key 6: 地图管理

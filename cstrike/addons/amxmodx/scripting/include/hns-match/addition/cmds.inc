@@ -435,7 +435,7 @@ public cmdTransferCT(id) {
 }
 
 public cmdStartMatch(id) {
-	if (!isUserWatcher(id)) {
+	if (!isUserWatcher(id) && !is_user_admin(id)) {
 		chat_print(id, "You do not have permission to start a match.");
 		return PLUGIN_HANDLED;
 	}

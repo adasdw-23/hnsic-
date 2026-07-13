@@ -27,12 +27,15 @@ public kniferound_start() {
 	g_eMatchState = STATE_PREPARE;
 	g_bKnifeRoundLive = false;
 
-	new iSpawnsT = CountSpawnPoints("info_player_deathmatch");
+	// ★ v5.6 FIX: CT 无出生点时不要 BalanceKnifeTeams
+	// 否则 CT 玩家开局瞬间死亡，回合直接判定 T 胜
 	new iSpawnsCT = CountSpawnPoints("info_player_start");
-	LogSendMessage("[KNIFE-START] Spawns: T=%d CT=%d map=%s", iSpawnsT, iSpawnsCT, g_szMapName);
-
-	// ★ Pre-balance teams before restart so ReGameDLL assigns both teams on spawn
-	BalanceKnifeTeams();
+	if (iSpawnsCT == 0) {
+		LogSendMessage("[KNIFE-START] CT has 0 spawns, keeping all players on T");
+		chat_print(0, "[HNS] 此地图无 CT 出生点，拼刀将在 T 方进行。");
+	} else {
+		BalanceKnifeTeams();
+	}
 
 	hns_restart_round(1.0);
 }
@@ -123,6 +126,13 @@ public kniferound_roundstart() {
 	} else {
 		ChangeGameplay(GAMEPLAY_TRAINING);
 	}
+
+	// ★ AI报名系统：拼刀开始
+	if (g_eAISState == AIS_KNIFE_PENDING) {
+		g_eAISState = AIS_KNIFE_ACTIVE;
+		client_print(0, print_chat, "[AI报名] 拼刀开始！%dv%d 战斗！",
+			g_iAISTeamSize, g_iAISTeamSize);
+	}
 }
 
 public BalanceKnifeTeams() {
@@ -133,8 +143,10 @@ public BalanceKnifeTeams() {
 
 	LogSendMessage("[KNIFE-BALANCE] Connected players: T=%d CT=%d", iNumT, iNumCT);
 
-	// Already balanced enough
-	if (iNumT > 0 && iNumCT > 0) return;
+	// ★ FIX P2-11: 检查人数差而非仅检查是否有人
+	new iDiff = iNumT - iNumCT;
+	if (iDiff < 0) iDiff = -iDiff;
+	if (iDiff <= 1) return;
 
 	new iTotal = iNumT + iNumCT;
 	if (iTotal < 2) return;
@@ -180,6 +192,14 @@ public kniferound_roundend(bool:win_ct) {
 			set_task(1.0, "WaitPick");
 		}
 	} else if (g_iMatchStatus == MATCH_TEAMKNIFE) {
+		// ★ v5.6 FIX: kniferound_start() 里的 hns_restart_round 会触发 sv_restart
+		// sv_restart 又会触发 rgRoundEnd（win_ct 永远是 false，即 T 胜）
+		// 如果 g_eMatchState == STATE_PREPARE，说明拼刀还没真正开始，直接忽略
+		// sv_restart 会自动触发 kniferound_roundstart 来真正启动拼刀轮
+		if (g_eMatchState == STATE_PREPARE) {
+			return;
+		}
+
 		// Collect detailed state for debugging
 		new iPlayers[MAX_PLAYERS], iNum, iAliveT = 0, iAliveCT = 0, iConnT = 0, iConnCT = 0;
 		get_players(iPlayers, iNum, "ch");
@@ -198,8 +218,9 @@ public kniferound_roundend(bool:win_ct) {
 		LogSendMessage("[KNIFE-ROUNDEND] win_ct=%d state=%s elapsed=%.1f conn(T=%d,CT=%d) alive(T=%d,CT=%d)",
 			win_ct, g_bKnifeRoundLive ? "live" : "prepare", flElapsed, iConnT, iConnCT, iAliveT, iAliveCT);
 
-		// ★ Protect against premature round end (e.g. before knife round actually starts or due to spawn bugs)
-		if ((g_bKnifeRoundLive && flElapsed < 5.0) || (!g_bKnifeRoundLive && g_eMatchState == STATE_PREPARE)) {
+		// ★ Protect against premature round end during live round (e.g. spawn bugs)
+		// STATE_PREPARE case is already handled above
+		if (g_bKnifeRoundLive && flElapsed < 5.0) {
 			if (iConnT > 0 && iConnCT > 0 && (iAliveT > 0 || iAliveCT > 0)) {
 				LogSendMessage("[KNIFE] Premature roundend ignored, restarting (alive T=%d CT=%d)", iAliveT, iAliveCT);
 				g_bKnifeRoundLive = false;
@@ -239,6 +260,17 @@ public kniferound_roundend(bool:win_ct) {
 	}
 	ChangeGameplay(GAMEPLAY_TRAINING);
 
+	// ★ AI报名系统：拼刀结束，重置状态，后续走原系统地图选择流程
+	if (g_eAISState == AIS_KNIFE_PENDING || g_eAISState == AIS_KNIFE_ACTIVE) {
+		remove_task(2012);  // 停止阵营HUD
+		if (g_bAISPenMode) {
+			aisTogglePen(false);
+			g_bAISPenMode = false;
+		}
+		g_eAISState = AIS_IDLE;
+		g_bAISTeamsAssigned = false;
+	}
+
 	// TODO: Кайф без state
 }
 
@@ -254,5 +286,9 @@ public kniferound_player_leave(id) {
 }
 
 public kniferound_player_join(id) {
+	// ★ AI报名恢复期间，跳过拉观战（让AI系统自行分配队伍）
+	if (g_bKnifeSkipSpec) {
+		return;
+	}
 	transferUserToSpec(id);
 }

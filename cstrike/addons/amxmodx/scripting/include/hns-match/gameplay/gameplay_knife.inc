@@ -1,12 +1,15 @@
 public knife_init() {
 	g_GPFuncs[GAMEPLAY_KNIFE][GP_ENABLE]	  = CreateOneForward(g_PluginId, "knife_enable_rules");
+	g_GPFuncs[GAMEPLAY_KNIFE][GP_DISABLE]  = CreateOneForward(g_PluginId, "knife_disable_rules");
 	g_GPFuncs[GAMEPLAY_KNIFE][GP_SETROLE]	 = CreateOneForward(g_PluginId, "knife_setrole", FP_CELL);
 }
 
 public knife_enable_rules() {
-	// Semiclip is controlled by semiclip.inc (PreThink/PostThink) and the admin menu.
-	// Do NOT disable it here - let players phase through each other in knife mode.
 	g_iCurrentGameplay = GAMEPLAY_KNIFE;
+}
+
+public knife_disable_rules() {
+	// Knife mode has no special cleanup needed
 }
 
 

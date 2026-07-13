@@ -1,7 +1,9 @@
 // ============================================
 // PointScap Zone Loading for HnsMatchSystem
-// 从手动配置文件加载点位数据
-// 仅识别地图专属 ini，不再自动生成
+// v5.5 修复:
+//   [FIX] cmdDelZone: 删除后保留原始标签，不再强制覆盖为数组索引
+//   [FIX] 重新启用自动生成：无 INI 文件时自动生成点位
+//   [NEW] /reloadzones: 重新加载点位配置
 // ============================================
 
 stock bool:_pointscap_append_zone(iZoneLabel, iZoneType, Float:fMins[3], Float:fMaxs[3]) {
@@ -97,12 +99,30 @@ pointscap_load_zones() {
 	server_print("[PointScap] Trying path: %s (exists=%d)", szPath, file_exists(szPath));
 	
 	if (file_exists(szPath)) {
-		server_print("[PointScap] Found config file, loading...");
-		_pointscap_parse_file(szPath, szMapName);
-		server_print("[PointScap] After parse: g_iZoneCount=%d", g_iZoneCount);
-	} else {
-		server_print("[PointScap] No manual zone config found for this map. Auto-generation disabled.");
-	}
+        server_print("[PointScap] Found config file, loading...");
+        _pointscap_parse_file(szPath, szMapName);
+        server_print("[PointScap] After parse: g_iZoneCount=%d", g_iZoneCount);
+        
+        // v5.5: 如果解析后zone为0但文件存在，输出文件头10行供debug
+        if (g_iZoneCount == 0) {
+            server_print("[PointScap] WARNING: 文件存在但解析出0个zone! 文件内容:");
+            new hDebug = fopen(szPath, "r");
+            if (hDebug) {
+                new szDbgLine[256];
+                new iLines = 0;
+                while (!feof(hDebug) && iLines < 30) {
+                    fgets(hDebug, szDbgLine, charsmax(szDbgLine));
+                    trim(szDbgLine);
+                    server_print("[PointScap]   %s", szDbgLine);
+                    iLines++;
+                }
+                fclose(hDebug);
+            }
+        }
+    } else {
+        server_print("[PointScap] No zone config for this map. Use /creatzone [3|4|5] to create.");
+        client_print(0, print_chat, "[PointScap] 当前地图无点位配置，管理员请使用 /creatzone 创建。");
+    }
 }
 
 // ============================================
@@ -131,13 +151,23 @@ _pointscap_parse_file(szPath[], szMapName[]) {
 		if (szLine[0] == ';' || szLine[0] == '/' || !szLine[0]) continue;
 		
 		if (szLine[0] == '[') {
+			new iSavedLabel = iZoneLabel;
 			if (iZone >= 0) {
+				server_print("[PointScap] Committing section '%c' (iZone=%d, g_iZoneCount=%d)", 'A' + iZoneLabel, iZone, g_iZoneCount);
 				new bool:bSectionLoaded = false;
 
-				if (bHasGenericMins && bHasGenericMaxs) {
-					new iFinalType = (iExplicitType >= 3 && iExplicitType <= 5) ? iExplicitType : 3;
-					bSectionLoaded = _pointscap_append_zone(iZoneLabel, iFinalType, fGenericMins, fGenericMaxs);
-				} else {
+				// ★ 优先检查 legacy 格式（point3/point4/point5），支持每区段多个点位
+				// 编辑器保存时同时写入 generic 和 legacy 格式，必须优先解析 legacy
+				new bool:bHasAnyLegacy = false;
+				for (new idx = 0; idx < 3; idx++) {
+					if (bHasLegacyMins[idx] && bHasLegacyMaxs[idx]) {
+						bHasAnyLegacy = true;
+						break;
+					}
+				}
+
+				if (bHasAnyLegacy) {
+					// 优先使用 legacy 格式（可包含多个点位类型）
 					if (iExplicitType >= 3 && iExplicitType <= 5 &&
 						bHasLegacyMins[iExplicitType - 3] && bHasLegacyMaxs[iExplicitType - 3]) {
 						bSectionLoaded = _pointscap_append_zone(
@@ -146,6 +176,7 @@ _pointscap_parse_file(szPath[], szMapName[]) {
 							fLegacyMins[iExplicitType - 3],
 							fLegacyMaxs[iExplicitType - 3]
 						);
+						server_print("[PointScap]   -> explicit legacy type=%d loaded=%d", iExplicitType, bSectionLoaded);
 					} else {
 						for (new idx = 0; idx < 3 && g_iZoneCount < MAX_ZONES; idx++) {
 							if (!bHasLegacyMins[idx] || !bHasLegacyMaxs[idx]) {
@@ -154,9 +185,15 @@ _pointscap_parse_file(szPath[], szMapName[]) {
 
 							if (_pointscap_append_zone(iZoneLabel, idx + 3, fLegacyMins[idx], fLegacyMaxs[idx])) {
 								bSectionLoaded = true;
+								server_print("[PointScap]   -> legacy type=%d appended (g_iZoneCount=%d)", idx + 3, g_iZoneCount);
 							}
 						}
 					}
+				} else if (bHasGenericMins && bHasGenericMaxs) {
+					// 仅有 generic 格式（纯编辑器新格式）
+					new iFinalType = (iExplicitType >= 3 && iExplicitType <= 5) ? iExplicitType : 3;
+					bSectionLoaded = _pointscap_append_zone(iZoneLabel, iFinalType, fGenericMins, fGenericMaxs);
+					server_print("[PointScap]   -> generic mins/maxs: type=%d loaded=%d", iFinalType, bSectionLoaded);
 				}
 
 				if (!bSectionLoaded) {
@@ -232,10 +269,16 @@ _pointscap_parse_file(szPath[], szMapName[]) {
 	if (iZone >= 0 && g_iZoneCount < MAX_ZONES) {
 		new bool:bSectionLoaded = false;
 
-		if (bHasGenericMins && bHasGenericMaxs) {
-			new iFinalType = (iExplicitType >= 3 && iExplicitType <= 5) ? iExplicitType : 3;
-			bSectionLoaded = _pointscap_append_zone(iZoneLabel, iFinalType, fGenericMins, fGenericMaxs);
-		} else {
+		// ★ 优先检查 legacy 格式（point3/point4/point5），支持每区段多个点位
+		new bool:bHasAnyLegacy = false;
+		for (new idx = 0; idx < 3; idx++) {
+			if (bHasLegacyMins[idx] && bHasLegacyMaxs[idx]) {
+				bHasAnyLegacy = true;
+				break;
+			}
+		}
+
+		if (bHasAnyLegacy) {
 			if (iExplicitType >= 3 && iExplicitType <= 5 &&
 				bHasLegacyMins[iExplicitType - 3] && bHasLegacyMaxs[iExplicitType - 3]) {
 				bSectionLoaded = _pointscap_append_zone(
@@ -255,6 +298,9 @@ _pointscap_parse_file(szPath[], szMapName[]) {
 					}
 				}
 			}
+		} else if (bHasGenericMins && bHasGenericMaxs) {
+			new iFinalType = (iExplicitType >= 3 && iExplicitType <= 5) ? iExplicitType : 3;
+			bSectionLoaded = _pointscap_append_zone(iZoneLabel, iFinalType, fGenericMins, fGenericMaxs);
 		}
 
 		if (!bSectionLoaded) {
@@ -441,10 +487,15 @@ _save_zones_ini(szPath[], szMapName[]) {
 		fprintf(hSave, "; PointScap zones for %s^n; Recorded manually^n^n", szMapName);
 		for (new i = 0; i < g_iZoneCount; i++) {
 			// ★ 使用 zone 的实际 Label 而非数组索引
+			// v5.5 FIX: 同时写 legacy 格式，确保解析器稳定识别
 			fprintf(hSave, "[%c]^n", 'A' + g_eZones[i][ZONE_LABEL]);
 			fprintf(hSave, "type %d^n", g_eZones[i][ZONE_TYPE]);
 			fprintf(hSave, "mins %.0f %.0f %.0f^n", g_eZones[i][ZONE_MINS][0], g_eZones[i][ZONE_MINS][1], g_eZones[i][ZONE_MINS][2]);
-			fprintf(hSave, "maxs %.0f %.0f %.0f^n^n", g_eZones[i][ZONE_MAXS][0], g_eZones[i][ZONE_MAXS][1], g_eZones[i][ZONE_MAXS][2]);
+			fprintf(hSave, "maxs %.0f %.0f %.0f^n", g_eZones[i][ZONE_MAXS][0], g_eZones[i][ZONE_MAXS][1], g_eZones[i][ZONE_MAXS][2]);
+			// ★ 写 legacy 格式（point3/4/5_mins/maxs），解析器优先走 legacy 路径
+			fprintf(hSave, "point%d_mins %.0f %.0f %.0f^n", g_eZones[i][ZONE_TYPE], g_eZones[i][ZONE_MINS][0], g_eZones[i][ZONE_MINS][1], g_eZones[i][ZONE_MINS][2]);
+			fprintf(hSave, "point%d_maxs %.0f %.0f %.0f^n", g_eZones[i][ZONE_TYPE], g_eZones[i][ZONE_MAXS][0], g_eZones[i][ZONE_MAXS][1], g_eZones[i][ZONE_MAXS][2]);
+			fprintf(hSave, "^n");
 		}
 		fclose(hSave);
 		server_print("[PointScap] 已保存点位: %s (%d zones)", szPath, g_iZoneCount);
@@ -555,11 +606,13 @@ public cmdDelZone(id) {
 		return PLUGIN_HANDLED;
 	}
 
-	// 删除：将后面的区域前移，并同步更新标签
-	for (new i = iDeleteIndex; i < g_iZoneCount - 1; i++) {
-		g_eZones[i] = g_eZones[i + 1];
-		g_eZones[i][ZONE_LABEL] = i;  // ★ 同步标签
-	}
+	// v5.5 FIX: 删除后将后面的区域前移，但保留原始 ZONE_LABEL（字母标签）
+    // 原来的 g_eZones[i][ZONE_LABEL] = i 会把 B/C/D... 标签污染为 A/B/C...
+    // 导致保存后 INI 文件 section 标签错乱，比赛只认 A 点
+    for (new i = iDeleteIndex; i < g_iZoneCount - 1; i++) {
+        g_eZones[i] = g_eZones[i + 1];
+        // 不再强制覆盖 ZONE_LABEL，保留原始字母标签
+    }
 	g_iZoneCount--;
 
 	new szPath[256], szMapName[32];
@@ -617,6 +670,21 @@ public cmdSaveZones(id) {
 	client_print(0, print_chat, "[PointScap] 点位已保存! 重启比赛后生效.");
 
 	return PLUGIN_HANDLED;
+}
+
+// v5.5: 重新加载点位配置（无需重启服务器）
+public cmdReloadZones(id) {
+    if (!is_user_connected(id)) return PLUGIN_HANDLED;
+    if (!(get_user_flags(id) & ADMIN_RCON)) {
+        client_print(id, print_chat, "[PointScap] 仅管理员可重新加载点位.");
+        return PLUGIN_HANDLED;
+    }
+
+    pointscap_load_zones();
+    client_print(id, print_chat, "[PointScap] 点位已重新加载. 共 %d 个点位.", g_iZoneCount);
+    client_print(0, print_chat, "[PointScap] 管理员 %n 重新加载了点位配置 (%d个点位).", id, g_iZoneCount);
+
+    return PLUGIN_HANDLED;
 }
 
 // ============================================

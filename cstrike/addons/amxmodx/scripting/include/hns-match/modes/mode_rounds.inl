@@ -2,22 +2,14 @@
 // HnsMatchSystem - Rounds Mode (回合制)
 // 先赢N局的队伍获胜
 // ============================================
-// Team A vs Team B，每回合攻守互换
-// 先赢 g_iRoundsWinRounds 局的队伍获胜
-// 总回合数上限 g_iRoundsMaxRounds = 2N-1
-// 换边在 g_iRoundsMaxRounds/2 处触发
-// 变量定义在 globals.inc 中
-// ============================================
 
-// 动态调整: 索引=每队人数, [0]=胜局数, [1]=最大局数
-// 2v2→3/5, 3v3→4/7, 4v4→5/9, 5v5→6/10
 new g_iRoundsTable[6][2] = {
-	{0, 0},   // 0人
-	{0, 0},   // 1v1 不用
-	{3, 5},   // 2v2
-	{4, 7},   // 3v3
-	{5, 9},   // 4v4
-	{6, 10}   // 5v5
+	{0, 0},
+	{0, 0},
+	{3, 5},
+	{4, 7},
+	{5, 9},
+	{6, 10}
 };
 
 public rounds_init() {
@@ -49,20 +41,17 @@ public rounds_start() {
 	g_iMatchStatus = MATCH_STARTED;
 	g_eMatchState = STATE_PREPARE;
 
-	// Record match start for deserter penalty
 	deserter_match_start();
 
 	g_isTeamTT = HNS_TEAM_A;
 
 	set_cvars_mode(MODE_ROUNDS);
 
-	// Force spectator settings during match
 	set_cvar_num("mp_forcecamera", 2);
 	set_cvar_num("mp_limitteams", 0);
 
 	loadMapCFG();
 
-	// Reset rounds scores
 	g_iRoundsScoreT = 0;
 	g_iRoundsScoreCT = 0;
 	g_iRoundsTotalPlayed = 0;
@@ -72,7 +61,6 @@ public rounds_start() {
 	g_eMatchInfo[e_mTeamSizeTT] = iNum;
 	g_eMatchInfo[e_mTeamSize] = get_num_players_in_match();
 
-	// 动态调整回合数: 根据每队人数 (手动设置后跳过)
 	new iTeamSize = g_eMatchInfo[e_mTeamSizeTT];
 	if (iTeamSize > 5) iTeamSize = 5;
 	if (iTeamSize < 2) iTeamSize = 2;
@@ -96,7 +84,6 @@ public rounds_stop() {
 	if (task_exists(7010)) remove_task(7010);
 	ExecuteForward(g_hForwards[MATCH_CANCEL], _);
 
-	// Restore spectator settings
 	set_cvar_num("mp_forcecamera", 0);
 
 	match_reset_data();
@@ -128,7 +115,6 @@ public rounds_roundstart() {
 		g_eMatchState = STATE_ENABLED;
 	}
 
-	// ★ 启动回合制HUD
 	if (!task_exists(7010)) {
 		set_task(1.0, "taskRoundsHud", 7010, .flags = "b");
 	}
@@ -167,6 +153,7 @@ public rounds_roundstart() {
 	set_task(3.0, "taskCheckAfk");
 }
 
+// ★ FIX P0-1: 用独立的 A/B 分数，不交换，根据 g_isTeamTT 映射
 public rounds_roundend(bool:win_ct) {
 	if (g_eMatchState != STATE_ENABLED) {
 		return;
@@ -174,38 +161,48 @@ public rounds_roundend(bool:win_ct) {
 
 	g_eMatchState = STATE_PREPARE;
 
-	// Determine winner of this round
-	new winner;
+	// 确定本回合获胜方是 A 队还是 B 队
+	new HNS_TEAM:winTeam;
 	if (win_ct) {
-		winner = TEAM_CT;
+		winTeam = (g_isTeamTT == HNS_TEAM_A) ? HNS_TEAM_B : HNS_TEAM_A;
 	} else {
-		winner = TEAM_TERRORIST;
+		winTeam = g_isTeamTT;
 	}
 
-	// Count rounds won
-	if (winner == TEAM_TERRORIST) g_iRoundsScoreT++;
-	else if (winner == TEAM_CT) g_iRoundsScoreCT++;
+	// 用独立的 A/B 分数计数
+	if (winTeam == HNS_TEAM_A) {
+		g_iRoundsScoreT++;
+	} else {
+		g_iRoundsScoreCT++;
+	}
 
 	g_iRoundsTotalPlayed++;
 
-	// Check if someone won
+	new szWinnerName[16];
+	copy(szWinnerName, charsmax(szWinnerName), winTeam == HNS_TEAM_A ? "A队" : "B队");
+
+	// 检查是否有人获胜
 	if (g_iRoundsScoreT >= g_iRoundsWinRounds) {
-		client_print(0, print_chat, "[Rounds] Team A wins the match! %d-%d", g_iRoundsScoreT, g_iRoundsScoreCT);
+		client_print(0, print_chat, "[Rounds] A队赢得比赛! 最终比分 A队 %d - %d B队", g_iRoundsScoreT, g_iRoundsScoreCT);
 		rounds_finish(1);
 		return;
 	} else if (g_iRoundsScoreCT >= g_iRoundsWinRounds) {
-		client_print(0, print_chat, "[Rounds] Team B wins the match! %d-%d", g_iRoundsScoreT, g_iRoundsScoreCT);
+		client_print(0, print_chat, "[Rounds] B队赢得比赛! 最终比分 A队 %d - %d B队", g_iRoundsScoreT, g_iRoundsScoreCT);
 		rounds_finish(2);
 		return;
 	}
 
-	// Swap at half (round max_rounds / 2)
-	if (g_iRoundsTotalPlayed == g_iRoundsMaxRounds / 2) {
+	// 半场换边 — 仅当开启时
+	if (g_bRoundsSwapSides && g_iRoundsTotalPlayed == g_iRoundsMaxRounds / 2) {
 		rounds_swap();
 	}
 
-	// Display current score
-	client_print(0, print_chat, "[Rounds] Score: A %d - %d B | First to %d wins", g_iRoundsScoreT, g_iRoundsScoreCT, g_iRoundsWinRounds);
+	// 显示比分
+	client_print(0, print_chat, "[Rounds] 第 %d/%d 回合结束 | %s获胜本回合 | 当前比分: A队 %d - %d B队 | 先赢%d局获胜",
+		g_iRoundsTotalPlayed, g_iRoundsMaxRounds, szWinnerName, g_iRoundsScoreT, g_iRoundsScoreCT, g_iRoundsWinRounds);
+
+	set_hudmessage(0, 255, 0, -1.0, 0.3, 0, 6.0, 4.0);
+	show_hudmessage(0, "[Rounds] %s 获胜!^nA队 %d - %d B队 | 先赢%d局获胜", szWinnerName, g_iRoundsScoreT, g_iRoundsScoreCT, g_iRoundsWinRounds);
 }
 
 public rounds_restartround() {
@@ -243,30 +240,24 @@ public rounds_unpause() {
 	set_unpause_settings();
 }
 
+// ★ FIX P0-1: 换边不再交换分数
 public rounds_swap() {
 	g_isTeamTT = HNS_TEAM:!g_isTeamTT;
 
-	// ★ 交换双方分数（换边后分数跟队伍走，不跟角色走）
-	new iTmp = g_iRoundsScoreT;
-	g_iRoundsScoreT = g_iRoundsScoreCT;
-	g_iRoundsScoreCT = iTmp;
-
-	// ★ 实际交换玩家阵营
+	// 只交换玩家阵营，不交换 A/B 分数
 	rg_swap_all_players();
 
 	ResetAfkData();
 }
 
 public rounds_killed(victim, killer) {
-	// No special handling for rounds mode
 }
 
 public rounds_falldamage(id, Float:flDmg) {
-	// No special handling for rounds mode
 }
 
+// ★ FIX P1-8: 用 g_iRoundsTotalPlayed 判断换边，而非 Mix 模式数据
 public rounds_player_join(id) {
-	// Check deserter ban
 	if (deserter_is_banned(id)) {
 		new iRemaining = deserter_get_ban_remaining(id);
 		new szTime[32];
@@ -294,12 +285,15 @@ public rounds_player_join(id) {
 			return;
 		}
 
-		new iMatchRounds = g_eMatchInfo[e_iSidesRounds][HNS_TEAM_A] + g_eMatchInfo[e_iSidesRounds][HNS_TEAM_B];
+		// ★ FIX: 用 g_iRoundsTotalPlayed 判断换边
+		new iSwapAt = g_iRoundsMaxRounds / 2;
+		new bool:bSwapped = (g_bRoundsSwapSides && g_iRoundsTotalPlayed >= iSwapAt);
 
-		if (iMatchRounds == g_ePlayerInfo[id][LEAVE_IN_ROUND]) {
-			rg_set_user_team(id, g_ePlayerInfo[id][PLAYER_TEAM][0] == 'T' ? TEAM_TERRORIST : TEAM_CT);
-		} else {
+		if (bSwapped) {
+			// 换边后，T/CT 标签已交换，需要反转原始阵营
 			rg_set_user_team(id, g_ePlayerInfo[id][PLAYER_TEAM][0] == 'T' ? TEAM_CT : TEAM_TERRORIST);
+		} else {
+			rg_set_user_team(id, g_ePlayerInfo[id][PLAYER_TEAM][0] == 'T' ? TEAM_TERRORIST : TEAM_CT);
 		}
 
 		if (g_eMatchState == STATE_PAUSED)
@@ -312,11 +306,9 @@ public rounds_player_join(id) {
 
 public rounds_player_leave(id) {
 	if (g_ePlayerInfo[id][PLAYER_MATCH]) {
-		new iMatchRounds = g_eMatchInfo[e_iSidesRounds][HNS_TEAM_A] + g_eMatchInfo[e_iSidesRounds][HNS_TEAM_B];
+		// ★ FIX: 记录当前总回合数而非 Mix 数据
+		g_ePlayerInfo[id][LEAVE_IN_ROUND] = g_iRoundsTotalPlayed;
 
-		g_ePlayerInfo[id][LEAVE_IN_ROUND] = iMatchRounds;
-
-		// Apply deserter penalty
 		deserter_apply_penalty(id);
 		deserter_save(id);
 	}
@@ -328,9 +320,7 @@ public rounds_player_leave(id) {
 	arrayset(g_ePlayerInfo[id], 0, PLAYER_INFO);
 }
 
-// ============================================
-// ★ 回合制 HUD：显示回合数和比分
-// ============================================
+// HUD
 public taskRoundsHud() {
 	if (g_eMatchState != STATE_ENABLED || g_iCurrentMode != MODE_ROUNDS) {
 		if (task_exists(7010)) remove_task(7010);
@@ -346,11 +336,11 @@ public taskRoundsHud() {
 	show_hudmessage(0, szHud);
 }
 
+// ★ FIX P2-9: MATCH_FINISH_POST 移到 match_reset_data 之前
 stock rounds_finish(iWinTeam) {
 	if (task_exists(7010)) remove_task(7010);
 	ExecuteForward(g_hForwards[MATCH_FINISH], _, iWinTeam);
 
-	// Clear deserter active flags (match ended normally)
 	deserter_clear_on_match_end();
 	matchControl_reset();
 
@@ -358,11 +348,12 @@ stock rounds_finish(iWinTeam) {
 
 	setTaskHud(0, 1.0, 1, 255, 255, 255, 4.0, "Game Over");
 
+	// ★ FIX: POST forward 在重置之前触发，让外部插件能读到比赛状态
+	ExecuteForward(g_hForwards[MATCH_FINISH_POST], _, iWinTeam);
+
 	match_reset_data();
 
 	training_start();
-
-	ExecuteForward(g_hForwards[MATCH_FINISH_POST], _, iWinTeam);
 }
 
 // ============================================================
@@ -385,32 +376,30 @@ showRoundsConfigMenu(id) {
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r2. \w获胜回合: \y%d (+1)^n", g_iRoundsWinRounds);
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r3. \w最大回合: \y%d (-1)^n", g_iRoundsMaxRounds);
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r4. \w最大回合: \y%d (+1)^n", g_iRoundsMaxRounds);
-	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\r5. \w根据人数自动设定回合数^n");
-	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\r6. \w设置完成^n");
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r5. \w半场换边: \y%s^n", g_bRoundsSwapSides ? "开启" : "关闭");
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\r6. \w根据人数自动设定回合数^n");
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\r7. \w设置完成^n");
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\r0. \w退出");
 
-	show_menu(id, (1<<0)|(1<<1)|(1<<2)|(1<<3)|(1<<4)|(1<<5)|(1<<9), szMenu, -1, "HnsRoundsConfig");
+	show_menu(id, (1<<0)|(1<<1)|(1<<2)|(1<<3)|(1<<4)|(1<<5)|(1<<6)|(1<<9), szMenu, -1, "HnsRoundsConfig");
 }
 
 public roundsConfigMenuHandler(id, key) {
 	if (key == 9) return;
 
 	if (key == 0) {
-		// 获胜回合 -1
 		if (g_iRoundsWinRounds > 2) {
 			g_iRoundsWinRounds--;
 			g_bRoundsManual = true;
 		}
 		showRoundsConfigMenu(id);
 	} else if (key == 1) {
-		// 获胜回合 +1
 		if (g_iRoundsWinRounds < g_iRoundsMaxRounds) {
 			g_iRoundsWinRounds++;
 			g_bRoundsManual = true;
 		}
 		showRoundsConfigMenu(id);
 	} else if (key == 2) {
-		// 最大回合 -1
 		if (g_iRoundsMaxRounds > g_iRoundsWinRounds + 1) {
 			g_iRoundsMaxRounds--;
 			if (g_iRoundsWinRounds > g_iRoundsMaxRounds)
@@ -419,14 +408,16 @@ public roundsConfigMenuHandler(id, key) {
 		}
 		showRoundsConfigMenu(id);
 	} else if (key == 3) {
-		// 最大回合 +1
 		if (g_iRoundsMaxRounds < 20) {
 			g_iRoundsMaxRounds++;
 			g_bRoundsManual = true;
 		}
 		showRoundsConfigMenu(id);
 	} else if (key == 4) {
-		// 根据人数自动设定 (取消手动模式)
+		g_bRoundsSwapSides = !g_bRoundsSwapSides;
+		client_print(0, print_chat, "[Rounds] 管理员 %n 将半场换边设为: %s", id, g_bRoundsSwapSides ? "开启" : "关闭");
+		showRoundsConfigMenu(id);
+	} else if (key == 5) {
 		g_bRoundsManual = false;
 		new iTeamSize = g_eMatchInfo[e_mTeamSizeTT];
 		if (iTeamSize > 5) iTeamSize = 5;
@@ -435,7 +426,7 @@ public roundsConfigMenuHandler(id, key) {
 		g_iRoundsMaxRounds = g_iRoundsTable[iTeamSize][1];
 		client_print(id, print_chat, "[Rounds] 已根据 %dv%d 自动设定: 先赢%d局 / 最多%d局", iTeamSize, iTeamSize, g_iRoundsWinRounds, g_iRoundsMaxRounds);
 		showRoundsConfigMenu(id);
-	} else if (key == 5) {
-		client_print(id, print_chat, "[Rounds] 回合设置: 先赢 %d 局 (最多 %d 局)", g_iRoundsWinRounds, g_iRoundsMaxRounds);
+	} else if (key == 6) {
+		client_print(id, print_chat, "[Rounds] 回合设置: 先赢 %d 局 (最多 %d 局) | 换边: %s", g_iRoundsWinRounds, g_iRoundsMaxRounds, g_bRoundsSwapSides ? "开启" : "关闭");
 	}
 }

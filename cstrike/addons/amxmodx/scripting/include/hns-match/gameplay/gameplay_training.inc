@@ -2,15 +2,21 @@ new hook_cmd;
 new bool:hook[MAX_PLAYERS + 1];
 
 new HookChain:fwdPlayerMove;
+new pCvarTrainingMode;
 
 public training_init() {
 	g_GPFuncs[GAMEPLAY_TRAINING][GP_ENABLE]	  = CreateOneForward(g_PluginId, "training_enable_rules");
 	g_GPFuncs[GAMEPLAY_TRAINING][GP_DISABLE]  = CreateOneForward(g_PluginId, "training_disable_rules");
 	g_GPFuncs[GAMEPLAY_TRAINING][GP_SETROLE]  = CreateOneForward(g_PluginId, "training_setrole", FP_CELL);
+	
+	// ★ 注册训练模式标记 CVAR
+	pCvarTrainingMode = register_cvar("hns_training_mode", "0");
 }
 
 public training_enable_rules() {
-	// Semiclip is handled by HnsMatchSemiClip.amxx; do not force it here.
+	client_print(0, print_chat, "[HNS] Training v7.0 loaded"); // ★ 版本标记验证
+
+	set_pcvar_num(pCvarTrainingMode, 1);
 
 	if (!hook_cmd) {
 		hook_cmd = register_clcmd("+hook", "hook_on");
@@ -21,6 +27,14 @@ public training_enable_rules() {
 		fwdPlayerMove = RegisterHookChain(RG_PM_Move, "PM_PlayerMove", true);
 
 	EnableHookChain(fwdPlayerMove);
+
+	// ★ 切换到练习模式时，给所有在线玩家一把 USP
+	for (new i = 1; i <= MaxClients; i++) {
+		if (is_user_alive(i)) {
+			rg_give_item(i, "weapon_usp");
+			rg_set_user_bpammo(i, WEAPON_USP, 100);
+		}
+	}
 }
 
 public hook_on(id) {
@@ -45,12 +59,11 @@ public PM_PlayerMove(const PlayerMove:ppmove, const server) {
 }
 
 public training_disable_rules() {
+	set_pcvar_num(pCvarTrainingMode, 0);
+
+	// ★ 不注销 clcmd（AMXX 不支持 unregister_clcmd），只禁用 hookchain
 	if (fwdPlayerMove)
 		DisableHookChain(fwdPlayerMove);
-
-	for (new i = 1; i <= MAX_PLAYERS; i++) {
-		hook[i] = false;
-	}
 }
 
 public training_setrole(id) {
@@ -59,5 +72,7 @@ public training_setrole(id) {
 	set_pev(id, pev_health, 100.0);
 	set_entvar(id, var_health, 100.0);
 	rg_give_item(id, "weapon_knife");
+	rg_give_item(id, "weapon_usp");
+	rg_set_user_bpammo(id, WEAPON_USP, 100);
 	rg_set_user_footsteps(id, false);
 }

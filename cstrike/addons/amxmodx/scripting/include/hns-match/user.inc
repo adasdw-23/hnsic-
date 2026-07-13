@@ -156,7 +156,7 @@ stock TeamName:getUserTeam(id) {
 }
 
 stock bool:getUserInMatch(id) {
-	if (g_iCurrentMode != MODE_MIX)
+	if (g_iCurrentMode != MODE_MIX && g_iCurrentMode != MODE_ROUNDS && g_iCurrentMode != MODE_ASCENSION && g_iCurrentMode != MODE_VAMP)
 		return false;
 
 	new iPlayers[MAX_PLAYERS], iNum;

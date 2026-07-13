@@ -30,8 +30,21 @@ stock hns_swap_teams() {
 	for (new i = 0; i < iNum; i++) {
 		id = iPlayers[i];
 		if (!is_user_connected(id)) continue;
-		if (rg_is_player_can_respawn(id))
+		if (rg_is_player_can_respawn(id)) {
 			rg_round_respawn(id);
+
+			// ★ 修复 CS 1.6 换队后闪光免疫 bug
+			// 重生后清除残留的闪光状态
+			message_begin(MSG_ONE, get_user_msgid("ScreenFade"), {0,0,0}, id);
+			write_short(0);      // duration
+			write_short(0);      // hold time
+			write_short(0x0004); // FFADE_OUT
+			write_byte(0);       // r
+			write_byte(0);       // g
+			write_byte(0);       // b
+			write_byte(0);       // alpha
+			message_end();
+		}
 	}
 
 	if (g_ModFuncs[g_iCurrentMode][MODEFUNC_SWAP])

@@ -95,6 +95,9 @@ stock cvars_init() {
 	pCvar[LASTGRENADE] = create_cvar("hns_last", "1", FCVAR_NONE, "Last grenade TT (0/1)", true, 0.0, true, 1.0);
 	bind_pcvar_num(pCvar[LASTGRENADE], g_iSettings[LASTGRENADE]);
 
+	// ★ 隐藏敌人血量 (0=不隐藏 1=比赛时隐藏 2=始终隐藏)
+	create_cvar("hns_hide_enemy_hp", "1", FCVAR_NONE, "Hide enemy HP (0=off 1=match only 2=always)", true, 0.0, true, 2.0);
+
 	pCvar[DMRESPAWN] = _:create_cvar("hns_dmrespawn", "3", FCVAR_NONE, "Respawn deathmatch time", true, 0.0, true, 10.0);
 	bind_pcvar_float(_:pCvar[DMRESPAWN], g_flDmRespawn);
 
@@ -113,7 +116,7 @@ stock cvars_init() {
 	pCvar[KNIFEMAP] = create_cvar("hns_knifemap", "35hp_2", FCVAR_NONE, "Knife map");
 	bind_pcvar_string(pCvar[KNIFEMAP], g_szKnifeMap, charsmax(g_szKnifeMap));
 
-	pCvar[PREFIX] = create_cvar("hns_prefix", "Match", FCVAR_NONE, "System prefix");
+	pCvar[PREFIX] = create_cvar("hns_prefix", "HNS", FCVAR_NONE, "System prefix");
 	bind_pcvar_string(pCvar[PREFIX], g_szPrefix, charsmax(g_szPrefix));
 
 	pCvar[GAMENAME] = create_cvar("hns_gamename", "Hide'n'Seek", FCVAR_NONE, "Game name");
@@ -175,10 +178,10 @@ stock cvars_init() {
 	pCvar[POINTSCAP_KNIFE_BONUS] = create_cvar("hns_pointscap_knife_bonus", "2", FCVAR_NONE, "PointScap CT knife all-kill bonus", true, 0.0, true, 10.0);
 	bind_pcvar_num(pCvar[POINTSCAP_KNIFE_BONUS], g_iPointScapKnifeBonus);
 
-	pCvar[POINTSCAP_TARGET_SCORE] = create_cvar("hns_pointscap_target_score", "30", FCVAR_NONE, "PointScap Ascension target score", true, 5.0, true, 100.0);
+	pCvar[POINTSCAP_TARGET_SCORE] = create_cvar("hns_pointscap_target_score", "40", FCVAR_NONE, "PointScap Ascension target score", true, 5.0, true, 100.0);
 	bind_pcvar_num(pCvar[POINTSCAP_TARGET_SCORE], g_iPointScapTargetScore);
 
-	pCvar[POINTSCAP_VAMP_INIT] = create_cvar("hns_pointscap_vamp_init", "30", FCVAR_NONE, "PointScap Vampire initial score", true, 5.0, true, 100.0);
+	pCvar[POINTSCAP_VAMP_INIT] = create_cvar("hns_pointscap_vamp_init", "40", FCVAR_NONE, "PointScap Vampire initial score", true, 5.0, true, 100.0);
 	bind_pcvar_num(pCvar[POINTSCAP_VAMP_INIT], g_iPointScapVampInit);
 
 	pCvar[POINTSCAP_SOUND_CAPTURE] = create_cvar("hns_pointscap_sound_capture", "1", FCVAR_NONE, "PointScap capture sound (0/1)", true, 0.0, true, 1.0);

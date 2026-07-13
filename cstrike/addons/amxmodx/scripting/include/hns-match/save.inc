@@ -42,15 +42,11 @@ stock bool:checkPlayer(id) {
 /* SAVE DATA */
 
 public PDS_Save() {
+	// ★ v5.6: 搬運 v2.1.0 邏輯 — 拼刀圖只保存玩家列表，不覆蓋狀態
+	// 之前總是在拼刀圖上保存 MATCH_NONE，導致換圖後比賽無法開始
 	if (hns_is_knife_map()) {
 		if (g_szBuffer[0])
 			PDS_SetString("playerslist", g_szBuffer);
-		// Fix: on knife maps, save neutral state so next non-knife map doesn't inherit knife mode
-		PDS_SetCell("match_status",		MATCH_NONE);
-		PDS_SetCell("match_mode",		MODE_TRAINING);
-		PDS_SetCell("match_gameplay",   GAMEPLAY_TRAINING);
-		PDS_SetCell("match_rules",	 	g_iCurrentRules);
-		return;
 	}
 	PDS_SetCell("match_status",		g_iMatchStatus);
 	PDS_SetCell("match_mode",		g_iCurrentMode);

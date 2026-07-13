@@ -29,6 +29,9 @@ public ChangeGameplay(iMode) {
 		case GAMEPLAY_HNS: {
 			hns_disable_rules();
 		}
+		case GAMEPLAY_KNIFE: {
+			knife_disable_rules();
+		}
 		case GAMEPLAY_TRAINING: {
 			training_disable_rules();
 		}

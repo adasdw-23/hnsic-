@@ -4,6 +4,10 @@
 
 #define _hnsmenu_included
 
+// ★ FIX: ChatManager 前缀 native 声明（由 HnsMatchChatmanager.sma 提供）
+native cm_set_prefix(id, const prefix[]);
+native cm_reset_prefix(id);
+
 // ============================================================================
 // PERMISSION HELPERS (uses AMXX flags)
 // ============================================================================
@@ -34,7 +38,7 @@ stock hns_get_user_perm_level(id) {
 
 // ============================================================================
 // HnsICMatch v5.0.0 - Unified Big Menu System
-// Replaces the original OpenHNS v4.2.0 hnsmenu.inc
+// Replaces the original LINNA v4.2.0 hnsmenu.inc
 //
 // Menu Structure (M key / nightvision / /mix / /menu):
 //   Main Menu (8 categories):
@@ -65,6 +69,13 @@ new bool:g_bHideKnifeCT[MAX_PLAYERS + 1] = {false, ...};
 new Float:g_flTimeToVoteMode;
 new iVoteRules[NATCH_RULES];
 new bool:g_bVotedRules[MAX_PLAYERS + 1];
+
+// --- Match start vote ---
+new bool:g_bMatchVoteActive;
+new g_iMatchVoteCount;
+new g_bMatchVoted[MAX_PLAYERS + 1];
+new g_iMatchVoteInitiator;
+new bool:g_bVoteApproved[MAX_PLAYERS + 1];
 
 // ============================================================================
 // INIT - Register menu command and reset per-player vars
@@ -122,9 +133,9 @@ stock hnsmenu_init() {
 	iMenuId = register_menuid("HnsICConfirm");
 	register_menucmd(iMenuId, K_0_1_9, "verifMenuHandler");
 
-	// Vote Rules
-	iMenuId = register_menuid("HnsICVoteRules");
-	register_menucmd(iMenuId, K_0_1_9, "HandlerStartVoteRules");
+	// Vote Rules — v5.6: new-style menu_create, no register_menucmd needed
+	// iMenuId = register_menuid("HnsICVoteRules");
+	// register_menucmd(iMenuId, ALL, "HandlerStartVoteRules");
 
 	// Training
 	iMenuId = register_menuid("HnsICTrainingMenu");
@@ -153,6 +164,10 @@ stock hnsmenu_init() {
 	// Admin
 	iMenuId = register_menuid("HnsICAdminMenu");
 	register_menucmd(iMenuId, ALL, "adminMenuHandler");
+
+	// BanKick
+	iMenuId = register_menuid("HnsICBanKickMenu");
+	register_menucmd(iMenuId, ALL, "banKickMenuHandler");
 
 	// Server Console
 	iMenuId = register_menuid("HnsICServerConsole");
@@ -193,20 +208,49 @@ public handlerMainMenu(id, key) {
 		return PLUGIN_HANDLED;
 	}
 
-	switch(key) {
-		case 0: showMatchMenu(id);      // 1. 比赛管理
-		case 1: showAISignupMenu(id);   // 2. AI分组
-		case 2: menuSelectMode(id);     // 3. 选择模式
-		case 3: showTrainingMenu(id);   // 4. 训练工具
-		case 4: showPersonalMenu(id);   // 5. 个人设置
-		case 5: showMapMenu(id);        // 6. 地图管理
-		case 6: showStatsMenu(id);      // 7. 数据统计
-		case 7: showDisplayMenu(id);    // 8. 显示设置
-		case 8: showAdminMenu(id);      // 9. 管理工具
+	new bool:bSpec = (getUserTeam(id) == TEAM_SPECTATOR);
+
+	// key 0 = 第一项。观战时第一项=加入队伍，非观战时第一项=比赛管理
+	if (key == 0) {
+		if (bSpec) {
+			showTeamJoinMenu(id);   // 加入队伍
+		} else {
+			showMatchMenu(id);      // 比赛管理
+		}
+		return PLUGIN_HANDLED;
+	}
+
+	// key 1-8 需要根据观战状态偏移
+	if (bSpec) {
+		switch(key) {
+			case 1: showMatchMenu(id);      // 比赛管理
+			case 2: showAISignupMenu(id);   // AI分组
+			case 3: menuSelectMode(id);     // 选择模式
+			case 4: if (g_iCurrentMode == MODE_TRAINING) client_cmd(id, "say /tr"); else { client_print(id, print_chat, "[HNS] 训练工具仅在训练模式下可用！"); showMainMenu(id); }  // 训练工具
+			case 5: showPersonalMenu(id);   // 个人设置
+			case 6: showMapMenu(id);        // 地图管理
+			case 7: showStatsMenu(id);      // 数据统计
+			case 8: showDisplayMenu(id);    // 显示设置
+			case 9: showAdminMenu(id);      // 管理工具/退出
+		}
+	} else {
+		switch(key) {
+			case 1: showAISignupMenu(id);   // AI分组
+			case 2: menuSelectMode(id);     // 选择模式
+			case 3: if (g_iCurrentMode == MODE_TRAINING) client_cmd(id, "say /tr"); else { client_print(id, print_chat, "[HNS] 训练工具仅在训练模式下可用！"); showMainMenu(id); }  // 训练工具
+			case 4: showPersonalMenu(id);   // 个人设置
+			case 5: showMapMenu(id);        // 地图管理
+			case 6: showStatsMenu(id);      // 数据统计
+			case 7: showDisplayMenu(id);    // 显示设置
+			case 8: showAdminMenu(id);      // 管理工具/退出
+		}
 	}
 
 	return PLUGIN_HANDLED;
 }
+
+// ★ 延迟1秒后加载权限（等 SteamID 验证完成）
+new bool:g_bHnsPermsLoaded = false;
 
 stock hnsmenu_client_putinserver(id) {
 	g_bHudEnabled[id] = true;
@@ -218,6 +262,13 @@ stock hnsmenu_client_putinserver(id) {
 	g_bHideKnifeCT[id] = false;
 }
 
+// ★ 每张地图首次有人进服时加载一次 hns_perms.ini
+public hns_perm_delayed_load() {
+	if (g_bHnsPermsLoaded) return;
+	g_bHnsPermsLoaded = true;
+	hns_perm_load_all();
+}
+
 // ============================================================================
 // MAIN MENU - Entry point (M key / nightvision)
 // ============================================================================
@@ -226,21 +277,46 @@ public cmdMainMenu(id) {
 	if (!is_user_connected(id))
 		return PLUGIN_HANDLED;
 
+	if (!g_bHnsPermsLoaded)
+		set_task(1.0, "hns_perm_delayed_load", 0);
+
 	showMainMenu(id);
 	return PLUGIN_HANDLED;
 }
 
 // ============================================================================
-// AI GROUPING MENU (AI分组菜单)
+// AI GROUPING MENU (AI分组菜单) — 新版集成
 // ============================================================================
 
 showAISignupMenu(id) {
+	new szState[32];
+	switch (g_eAISState) {
+		case AIS_IDLE:          copy(szState, charsmax(szState), "\d空闲");
+		case AIS_SIGNUP:        copy(szState, charsmax(szState), "\y报名中");
+		case AIS_KNIFE_PENDING: copy(szState, charsmax(szState), "\y拼刀待命");
+		case AIS_KNIFE_ACTIVE:  copy(szState, charsmax(szState), "\r拼刀中");
+		case AIS_VOTE_MODE:     copy(szState, charsmax(szState), "\y投票中");
+		case AIS_FINAL:         copy(szState, charsmax(szState), "\g准备开始");
+		case AIS_LOCKED:        copy(szState, charsmax(szState), "\r比赛中");
+	}
+
+	new iOnline = 0;
+	new iPlayers[MAX_PLAYERS], iNum;
+	get_players(iPlayers, iNum, "ch");
+	iOnline = iNum;
+
 	new szMenu[512], iLen;
-	iLen = formatex(szMenu, charsmax(szMenu), "\rAI组队报名 \d- 比赛系统^n^n");
+	iLen = formatex(szMenu, charsmax(szMenu), "\rAI报名系统^n^n");
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r状态: %s | 在线: %d人^n", szState, iOnline);
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r已报名: %d/%d^n^n", g_iAISSignedCount, g_iAISTeamSize * 2);
 
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r1. \w报名参加 (/join)^n");
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r2. \w取消报名 (/unjoin)^n");
-	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r3. \wAI菜单 (/ai)^n");
+
+	if (g_eAISState == AIS_VOTE_MODE)
+		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r3. \w投票选模式^n");
+	else
+		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\d3. 投票选模式^n");
 
 	if (isUserWatcher(id))
 		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\r8. \w管理设置^n");
@@ -262,17 +338,20 @@ public aiSignupMenuHandler(id, key) {
 
 	if (key == 0) {
 		// 报名
-		client_cmd(id, "hns_ai_join");
+		aisJoin(id);
 	} else if (key == 1) {
 		// 取消报名
-		client_cmd(id, "hns_ai_unjoin");
+		aisUnjoin(id);
 	} else if (key == 2) {
-		// 打开AI原生菜单
-		client_cmd(id, "hns_ai_menu");
+		// 投票选模式
+		if (g_eAISState == AIS_VOTE_MODE)
+			aisShowVoteMenu(id);
+		else
+			client_print(id, print_chat, "[AI报名] 当前非投票阶段。");
 	} else if (key == 7) {
 		// 管理设置
 		if (isUserWatcher(id))
-			client_cmd(id, "say /admin");
+			aisShowMainMenu(id);
 	}
 }
 
@@ -287,27 +366,33 @@ showMainMenu(id) {
 
 	iLen = formatex(szMenu, charsmax(szMenu), "\r%s \w- \d主菜单^n^n", szPrefix);
 
+	new bool:bSpec = (getUserTeam(id) == TEAM_SPECTATOR);
+	new iKey = 0;
+
+	// ─── 队伍（仅观战时显示） ───
+	if (bSpec) {
+		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r%d. \w加入队伍^n", ++iKey);
+	}
+
 	// ─── 比赛 ───
-	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r1. \w比赛管理 \d(开始/控制/设置)^n");
-	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r2. \wAI分组 \d(报名/状态)^n");
-	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r3. \w选择模式^n");
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r%d. \w比赛管理 \d(开始/控制/设置)^n", ++iKey);
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r%d. \wAI分组 \d(报名/状态)^n", ++iKey);
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r%d. \w选择模式^n", ++iKey);
 
 	// ─── 工具 ───
-	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r4. \w训练工具^n");
-	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r5. \w个人设置^n");
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r%d. \w训练工具^n", ++iKey);
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r%d. \w个人设置^n", ++iKey);
 
 	// ─── 信息 ───
-	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r6. \w地图管理^n");
-	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r7. \w数据统计^n");
-	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r8. \w显示设置^n");
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r%d. \w地图管理^n", ++iKey);
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r%d. \w数据统计^n", ++iKey);
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r%d. \w显示设置^n", ++iKey);
 
 	// ─── 管理 ───
 	if (isUserWatcher(id) || is_user_admin(id))
-		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r9. \w管理工具 \d(Watcher/Admin)^n");
+		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\r0. \w管理工具 \d(Watcher/Admin)^n");
 	else
-		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\d9. 管理工具^n");
-
-	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r0. \w退出^n");
+		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\r0. \w退出^n");
 
 	show_menu(id, (1<<0)|(1<<1)|(1<<2)|(1<<3)|(1<<4)|(1<<5)|(1<<6)|(1<<7)|(1<<8)|(1<<9), szMenu, -1, "HnsICMainMenu");
 }
@@ -317,10 +402,7 @@ showMainMenu(id) {
 // ============================================================================
 
 showMatchMenu(id) {
-	if (!isUserWatcher(id) && !is_user_admin(id)) {
-		showMainMenu(id);
-		return;
-	}
+	new bool:bIsAdmin = isUserWatcher(id) || is_user_admin(id);
 
 	new szMenu[512], iLen;
 	new szPrefix[24];
@@ -333,7 +415,20 @@ showMatchMenu(id) {
 	iLen = formatex(szMenu, charsmax(szMenu), "\r%s \w- \y比赛管理^n^n", szPrefix);
 
 	// ─── 开始/停止 ───
-	// Item 1: Context-sensitive start/stop
+	// 普通玩家只能看到"开始混合赛"，管理员才能看到全部选项
+	if (!bIsAdmin) {
+		// 普通玩家简化菜单
+		if (g_iCurrentMode == MODE_TRAINING && g_iMatchStatus <= MATCH_WAITCONNECT && !hns_is_knife_map()) {
+			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r1. \w开始混合赛 (投票)^n");
+		} else {
+			iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\d1. 当前无法开始比赛^n");
+		}
+		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r0. \w返回");
+		show_menu(id, (1<<0)|(1<<9), szMenu, -1, "HnsICMatchMenu");
+		return;
+	}
+
+	// 管理员完整菜单
 	if (hns_is_knife_map()) {
 		if (!hns_cup_enabled()) {
 			if (g_iCurrentMode == MODE_TRAINING && g_iMatchStatus == MATCH_NONE)
@@ -404,6 +499,17 @@ showMatchMenu(id) {
 public matchMenuHandler(id, key) {
 	if (key == 0) {
 	    { // Key 1: Start/Stop context action
+	    			// 普通玩家发起投票
+	    			if (!isUserWatcher(id) && !is_user_admin(id)) {
+	    				if (g_iCurrentMode == MODE_TRAINING && g_iMatchStatus <= MATCH_WAITCONNECT && !hns_is_knife_map()) {
+	    					startMatchVote(id);
+	    				} else {
+	    					showMatchMenu(id);
+	    				}
+	    				return;
+	    			}
+
+	    			// 管理员直接开始
 	    			if (hns_is_knife_map()) {
 	    				if (!hns_cup_enabled()) {
 	    					if (g_iCurrentMode == MODE_TRAINING && g_iMatchStatus == MATCH_NONE)
@@ -422,7 +528,7 @@ public matchMenuHandler(id, key) {
 	    					else
 	    						cmdKnifePickBan(id);
 	    				}
-	    			} else {
+	    		} else {
 					if (g_iCurrentMode == MODE_PUB || g_iCurrentMode == MODE_DM || g_iCurrentMode == MODE_ZM || g_iMatchStatus == MATCH_WAITCONNECT) {
 						cmdStop(id);
 					} else if (g_iCurrentMode == MODE_TRAINING && g_iMatchStatus <= MATCH_WAITCONNECT) {
@@ -478,7 +584,7 @@ public matchMenuHandler(id, key) {
 // ============================================================================
 
 public menuSelectMode(id) {
-	if (!isUserWatcher(id) && !is_user_admin(id))
+	if (!isUserWatcher(id) && !is_user_admin(id) && !g_bVoteApproved[id])
 		return;
 
 	if (g_iCurrentMode == MODE_MIX) {
@@ -503,6 +609,14 @@ public menuSelectMode(id) {
 }
 
 public HandlerSelectMode(id, key) {
+	if (key == 9) {
+	    showMatchMenu(id);
+	    return;
+	}
+
+	// 选择了模式，清除临时投票授权
+	g_bVoteApproved[id] = false;
+
 	if (key == 0) {
 	    { cmdMrMode(id); cmdStartMatch(id); }
 	} else if (key == 1) {
@@ -521,8 +635,90 @@ public HandlerSelectMode(id, key) {
 	    { cmdDMMode(id); }
 	} else if (key == 8) {
 	    { cmdZMMode(id); }
-	} else if ((key == 9)) {
-	    showMatchMenu(id);
+	}
+}
+
+// ============================================================================
+// MATCH START VOTE (Player-initiated match start)
+// ============================================================================
+
+stock startMatchVote(id) {
+	if (g_bMatchVoteActive) {
+		chat_print(id, "已有投票正在进行中。");
+		return;
+	}
+
+	// 统计当前服务器玩家数
+	new p[MAX_PLAYERS], n;
+	get_players(p, n, "ch");
+
+	// 1人直接开，不用投票
+	if (n <= 1) {
+		chat_print(0, "^3%n^1 直接开始比赛（服务器仅1人）", id);
+		g_bVoteApproved[id] = true;
+		menuSelectMode(id);
+		return;
+	}
+
+	// 2人以上需要投票
+	g_bMatchVoteActive = true;
+	g_iMatchVoteCount = 0;
+	g_iMatchVoteInitiator = id;
+	for (new i = 1; i <= MaxClients; i++) {
+		g_bMatchVoted[i] = false;
+	}
+
+	new szMenu[128];
+	formatex(szMenu, charsmax(szMenu), "\r比赛开始投票 \y|%n发起^n^n是否开始混合赛？", id);
+
+	for (new i = 0; i < n; i++) {
+		new hMenu = menu_create(szMenu, "handleMatchVote");
+		menu_additem(hMenu, "\y是，开始比赛");
+		menu_additem(hMenu, "\r否");
+		menu_setprop(hMenu, MPROP_EXIT, MEXIT_NEVER);
+		menu_display(p[i], hMenu, 0, 15);
+	}
+
+	chat_print(0, "^3%n^1 发起了比赛开始投票 (需要多数同意)", id);
+
+	// 15秒后结束投票
+	set_task(15.0, "finishMatchVote");
+}
+
+public handleMatchVote(id, hMenu, item) {
+	menu_destroy(hMenu);
+	if (!g_bMatchVoteActive) return;
+	if (g_bMatchVoted[id]) return;
+
+	g_bMatchVoted[id] = true;
+
+	if (item == 0) {
+		g_iMatchVoteCount++;
+		chat_print(0, "^3%n^1 投票同意开始比赛 (%d票)", id, g_iMatchVoteCount);
+		// 多数通过（超过半数）
+		new p[MAX_PLAYERS], n;
+		get_players(p, n, "ch");
+		if (g_iMatchVoteCount > n / 2) {
+			finishMatchVote();
+		}
+	} else {
+		chat_print(0, "^3%n^1 投票拒绝开始比赛", id);
+	}
+}
+
+public finishMatchVote() {
+	if (!g_bMatchVoteActive) return;
+	g_bMatchVoteActive = false;
+
+	new p[MAX_PLAYERS], n;
+	get_players(p, n, "ch");
+
+	if (g_iMatchVoteCount > n / 2) {
+		chat_print(0, "比赛开始投票通过！开始选择模式...");
+		g_bVoteApproved[g_iMatchVoteInitiator] = true;
+		menuSelectMode(g_iMatchVoteInitiator);
+	} else {
+		chat_print(0, "比赛开始投票未通过。");
 	}
 }
 
@@ -930,7 +1126,8 @@ public verifMenuHandler(id, key) {
 }
 
 // ============================================================================
-// VOTE SYSTEM
+// VOTE SYSTEM — v5.6: 搬運 v2.1.0 new-style menu_create/menu_display
+// 從根本上杜絕 register_menucmd 按鍵掩碼 bug
 // ============================================================================
 
 public StartVoteRules() {
@@ -947,30 +1144,41 @@ public StartVoteRules() {
 		if (getUserTeam(id) != TEAM_CT && getUserTeam(id) != TEAM_TERRORIST)
 			continue;
 
-		new szMenu[256], iLen;
-		iLen = formatex(szMenu, charsmax(szMenu), "\r投票: 游戏模式^n^n");
-		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r1. \wMR (最大回合数)^n");
-		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r2. \w计时模式^n");
-		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r3. \w决斗模式 (1v1)^n");
-		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r4. \w点位积分模式^n");
-		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r5. \w点位扣除模式^n");
-		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r6. \w回合制比赛^n^n");
-		iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r0. \w退出");
+		new szMsg[64];
+		formatex(szMsg, charsmax(szMsg), "\r投票: 游戏模式");
+		new hMenu = menu_create(szMsg, "HandlerStartVoteRules");
 
-		show_menu(id, (1<<0)|(1<<1)|(1<<2)|(1<<3)|(1<<4)|(1<<5)|(1<<9), szMenu, -1, "HnsICVoteRules");
+		menu_additem(hMenu, "\wMR (最大回合数)", "1");
+		menu_additem(hMenu, "\w计时模式", "2");
+		menu_additem(hMenu, "\w决斗模式 (1v1)", "3");
+		menu_additem(hMenu, "\w点位积分模式", "4");
+		menu_additem(hMenu, "\w点位扣除模式", "5");
+		menu_additem(hMenu, "\w回合制比赛", "6");
+
+		menu_setprop(hMenu, MPROP_EXIT, MEXIT_ALL);
+		menu_display(id, hMenu, 0);
 	}
 
 	set_task(20.0, "VoteFinished", 83129);
 }
 
-public HandlerStartVoteRules(id, key) {
-	if (key == 9 || get_gametime() > g_flTimeToVoteMode)
+public HandlerStartVoteRules(id, hMenu, item) {
+	if (item == MENU_EXIT || get_gametime() > g_flTimeToVoteMode) {
+		menu_destroy(hMenu);
 		return;
+	}
 
-	// Prevent repeat voting
-	if (g_bVotedRules[id])
+	if (g_bVotedRules[id]) {
+		menu_destroy(hMenu);
 		return;
+	}
 	g_bVotedRules[id] = true;
+
+	new szData[6], szName[64], iAccess, iCallback;
+	menu_item_getinfo(hMenu, item, iAccess, szData, charsmax(szData), szName, charsmax(szName), iCallback);
+	menu_destroy(hMenu);
+
+	new key = str_to_num(szData) - 1; // 1-based → 0-based
 
 	new szRuleNames[NATCH_RULES][32] = {
 		"MR",
@@ -1020,17 +1228,235 @@ public VoteFinished() {
 		szRuleNames[g_iCurrentRules],
 		szRuleNames[g_iCurrentRules]);
 
-	// Direct-launch modes that don't need the normal MR/Timer match setup
-	if (g_iCurrentRules == RULES_POINTSCAP) {
-		cmdAscensionMode(0);
-	} else if (g_iCurrentRules == RULES_VAMP) {
-		cmdVampMode(0);
-	} else if (g_iCurrentRules == RULES_ROUNDS) {
-		g_iCurrentRules = RULES_MR;
-		rounds_start();
+	// ★ v5.7: 保存模式 → 显示地图选择菜单
+	// 在地图选择完成后，由 mapPick 系统自动启动比赛
+	savePendingMode(g_iCurrentRules);
+
+	// 显示地图选择菜单给所有玩家
+	new iPlayers[MAX_PLAYERS], iNum;
+	get_players(iPlayers, iNum, "ch");
+	for (new i; i < iNum; i++) {
+		new id = iPlayers[i];
+		if (is_user_connected(id) && (getUserTeam(id) == TEAM_CT || getUserTeam(id) == TEAM_TERRORIST)) {
+			showMapPickMenu(id);
+		}
 	}
 
 	arrayset(iVoteRules, 0, sizeof(iVoteRules));
+}
+
+// ============================================================================
+// MAP PICK SYSTEM — 拼刀选人后选择随机地图或指定地图
+// ============================================================================
+
+#define MAP_PICK_MENU_ID 8391
+#define PENDING_MODE_FILE "hns_pending_mode.txt"
+
+// ★ 保存待启动模式到文件
+savePendingMode(NATCH_RULES:rules) {
+	new szFile[128];
+	get_configsdir(szFile, charsmax(szFile));
+	format(szFile, charsmax(szFile), "%s/mixsystem/%s", szFile, PENDING_MODE_FILE);
+
+	new szDir[128];
+	get_configsdir(szDir, charsmax(szDir));
+	format(szDir, charsmax(szDir), "%s/mixsystem", szDir);
+	if (!dir_exists(szDir)) mkdir(szDir);
+
+	new f = fopen(szFile, "wt");
+	if (f) {
+		fprintf(f, "%d", _:rules);
+		fclose(f);
+	}
+}
+
+// ★ 加载待启动模式（换图后自动调用）
+public loadPendingMode() {
+	new szFile[128];
+	get_configsdir(szFile, charsmax(szFile));
+	format(szFile, charsmax(szFile), "%s/mixsystem/%s", szFile, PENDING_MODE_FILE);
+
+	if (!file_exists(szFile)) return -1;
+
+	new f = fopen(szFile, "rt");
+	if (!f) return -1;
+
+	new szData[8];
+	fgets(f, szData, charsmax(szData));
+	fclose(f);
+
+	// 读取后删除
+	delete_file(szFile);
+
+	return str_to_num(szData);
+}
+
+// ★ 换图后自动启动比赛
+public autoStartPendingMode() {
+	new iRules = loadPendingMode();
+	if (iRules < 0) return;
+
+	g_iCurrentRules = NATCH_RULES:iRules;
+
+	new szRuleNames[NATCH_RULES][32] = {
+		"MR", "Timer", "Duel", "PointScap", "Vampire", "Rounds"
+	};
+
+	chat_print(0, "^3自动启动 %s 模式^1.", szRuleNames[g_iCurrentRules]);
+
+	// 根据模式类型启动
+	switch (g_iCurrentRules) {
+		case RULES_POINTSCAP: cmdAscensionMode(0);
+		case RULES_VAMP:      cmdVampMode(0);
+		case RULES_ROUNDS:    { g_iCurrentRules = RULES_MR; rounds_start(); }
+		default: {
+			// MR/Timer/Duel: 设置模式 + 启动比赛
+			new szGameName[64];
+			formatex(szGameName, charsmax(szGameName), "HNS Mix [%s]", szRuleNames[g_iCurrentRules]);
+			set_pcvar_string(pCvar[GAMENAME], szGameName);
+			cmdStartMatch(0);
+		}
+	}
+}
+
+// ★ 地图选择菜单
+showMapPickMenu(id) {
+	new szRuleNames[NATCH_RULES][32] = {
+		"MR", "Timer", "Duel", "PointScap", "Vampire", "Rounds"
+	};
+
+	new szMenu[512], len;
+	len  = formatex(szMenu,       charsmax(szMenu),       "\r选择地图^n^n");
+	len += formatex(szMenu[len],  charsmax(szMenu) - len, "\r模式: \y%s^n^n", szRuleNames[g_iCurrentRules]);
+	len += formatex(szMenu[len],  charsmax(szMenu) - len, "\r1.\w 随机地图^n");
+	len += formatex(szMenu[len],  charsmax(szMenu) - len, "\r2.\w 指定地图^n^n");
+	len += formatex(szMenu[len],  charsmax(szMenu) - len, "\r说明: 随机地图会根据模式自动选择合适地图^n");
+	len += formatex(szMenu[len],  charsmax(szMenu) - len, "\rMR/计时: 随机Skill或Boost | 其他: 仅Boost^n^n");
+	len += formatex(szMenu[len],  charsmax(szMenu) - len, "\r0.\w 退出");
+
+	show_menu(id, MAP_PICK_MENU_ID, szMenu, -1, "MapPickMenu");
+}
+
+public handleMapPickMenu(id, key) {
+	switch (key) {
+		case 0: {
+			// 随机地图
+			chat_print(0, "^3%n^1 选择了随机地图.", id);
+			pickRandomMap();
+		}
+		case 1: {
+			// 指定地图 → 打开地图列表
+			chat_print(id, "[HNS] 请在地图列表中选择地图.");
+			client_cmd(id, "say /maps");
+		}
+	}
+}
+
+// ★ 根据模式随机选择地图
+pickRandomMap() {
+	new szMapsPath[128];
+	get_configsdir(szMapsPath, charsmax(szMapsPath));
+	format(szMapsPath, charsmax(szMapsPath), "%s/mixsystem/hns-maps.ini", szMapsPath);
+
+	if (!file_exists(szMapsPath)) {
+		chat_print(0, "[HNS] 地图配置文件不存在，无法随机选择.");
+		return;
+	}
+
+	// 读取 hns-maps.ini，收集 skill 和 boost 地图
+	new Array:arrSkill = ArrayCreate(32);
+	new Array:arrBoost = ArrayCreate(32);
+
+	new f = fopen(szMapsPath, "rt");
+	if (!f) {
+		chat_print(0, "[HNS] 无法读取地图配置.");
+		return;
+	}
+
+	new szLine[128], szSection[32];
+	while (!feof(f)) {
+		fgets(f, szLine, charsmax(szLine));
+		trim(szLine);
+
+		if (szLine[0] == EOS || szLine[0] == ';' || szLine[0] == '#') continue;
+
+		// 检测 section
+		if (szLine[0] == '[') {
+			copy(szSection, charsmax(szSection), szLine);
+			replace(szSection, charsmax(szSection), "[", "");
+			replace(szSection, charsmax(szSection), "]", "");
+			strtolower(szSection);
+			continue;
+		}
+
+		// 解析地图名（第一列）
+		new szMap[32], szRest[96];
+		parse(szLine, szMap, charsmax(szMap), szRest, charsmax(szRest));
+
+		if (equal(szSection, "skill")) {
+			ArrayPushString(arrSkill, szMap);
+		} else if (equal(szSection, "boost") || equal(szSection, "boss")) {
+			ArrayPushString(arrBoost, szMap);
+		}
+	}
+	fclose(f);
+
+	new iSkillCount = ArraySize(arrSkill);
+	new iBoostCount = ArraySize(arrBoost);
+
+	// 根据模式选择池
+	new Array:arrPool;
+	new szPoolName[32];
+
+	// MR/Timer → skill + boost 混合池
+	// Duel/PointScap/Vamp/Rounds → 仅 boost
+	if (g_iCurrentRules == RULES_MR || g_iCurrentRules == RULES_TIMER) {
+		// 混合池: 合并 skill 和 boost
+		arrPool = ArrayCreate(32);
+		for (new i = 0; i < iSkillCount; i++) {
+			new szTmp[32];
+			ArrayGetString(arrSkill, i, szTmp, charsmax(szTmp));
+			ArrayPushString(arrPool, szTmp);
+		}
+		for (new i = 0; i < iBoostCount; i++) {
+			new szTmp[32];
+			ArrayGetString(arrBoost, i, szTmp, charsmax(szTmp));
+			ArrayPushString(arrPool, szTmp);
+		}
+		copy(szPoolName, charsmax(szPoolName), "Skill + Boost");
+	} else {
+		// Duel/PointScap/Vamp/Rounds → 仅 boost
+		arrPool = ArrayCreate(32);
+		for (new i = 0; i < iBoostCount; i++) {
+			new szTmp[32];
+			ArrayGetString(arrBoost, i, szTmp, charsmax(szTmp));
+			ArrayPushString(arrPool, szTmp);
+		}
+		copy(szPoolName, charsmax(szPoolName), "Boost");
+	}
+
+	new iPoolCount = ArraySize(arrPool);
+	if (iPoolCount == 0) {
+		chat_print(0, "[HNS] 随机地图池为空 (%s)，无法选择.", szPoolName);
+		ArrayDestroy(arrSkill);
+		ArrayDestroy(arrBoost);
+		ArrayDestroy(arrPool);
+		return;
+	}
+
+	// 随机选择
+	new iRandom = random(iPoolCount);
+	new szMap[32];
+	ArrayGetString(arrPool, iRandom, szMap, charsmax(szMap));
+
+	chat_print(0, "[HNS] 随机地图: ^3%s^1 (池: %s, 共 %d 张)", szMap, szPoolName, iPoolCount);
+
+	// 换图
+	server_cmd("changelevel %s", szMap);
+
+	ArrayDestroy(arrSkill);
+	ArrayDestroy(arrBoost);
+	ArrayDestroy(arrPool);
 }
 
 // ============================================================================
@@ -1065,6 +1491,13 @@ public cmdRoundsMode(id) {
 // ============================================================================
 
 showTrainingMenu(id) {
+	// ★ 训练工具仅在训练模式下可用
+	if (g_iCurrentMode != MODE_TRAINING) {
+		client_print(id, print_chat, "[HNS] 训练工具仅在训练模式下可用！");
+		showMainMenu(id);
+		return;
+	}
+
 	new szMenu[512], iLen;
 	new szPrefix[24];
 
@@ -1248,7 +1681,7 @@ public personalMenuHandler(id, key) {
 	    			set_task(0.2, "taskReopenPersonalMenu", id);
 	    		}
 	} else if (key == 5) {
-	    client_cmd(id, "say /knife"); // Knife Model
+	    client_cmd(id, "say /skin_knife"); // 刀皮肤选择（皮肤系统）
 	} else if (key == 6) {
 	    { // JumpStats toggle
 	    			g_bJumpStatsEnabled[id] = !g_bJumpStatsEnabled[id];
@@ -1256,8 +1689,8 @@ public personalMenuHandler(id, key) {
 	    			set_task(0.2, "taskReopenPersonalMenu", id);
 	    		}
 	} else if (key == 7) {
-        // 发放皮肤管理 - 选玩家→数量→类型
-        showPersonalSkinDistribPlayerList(id);
+        // 发放皮肤管理 - 使用皮肤系统自带菜单
+        client_cmd(id, "say /giveskin");
     } else if (key == 8 || key == 9) {
 	    showMainMenu(id); // Back
 	}
@@ -1404,7 +1837,7 @@ showDisplayMenu(id) {
 
 public displayMenuHandler(id, key) {
 	if (key == 0) {
-	    client_cmd(id, "say /knife"); // Knife Model
+	    client_cmd(id, "say /skin_knife"); // 刀皮肤选择（皮肤系统）
 	} else if (key == 1) {
 	    { // Hide Knife TT
 	    			g_bHideKnifeTT[id] = !g_bHideKnifeTT[id];
@@ -1530,7 +1963,7 @@ showAdminMenu(id) {
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r4. \wAI队伍^n");
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r5. \w批准离开^n");
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r6. \w添加替补^n");
-	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r7. \w踢出玩家^n");
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r7. \w封禁/踢出^n");
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r8. \w逃兵解封^n");
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r9. \w发放管理^n");
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r0. \w返回");
@@ -1552,13 +1985,37 @@ public adminMenuHandler(id, key) {
 	} else if (key == 5) {
 	    client_cmd(id, "say /sub");
 	} else if (key == 6) {
-	    client_cmd(id, "amx_kickmenu");
+	    showBanKickMenu(id);
 	} else if (key == 7) {
 	    client_cmd(id, "say /unban");
 	} else if (key == 8) {
 	    showDistributeMenu(id);
 	} else if (key == 9) {
 	    showMainMenu(id); // Back
+	}
+}
+
+// ============================================================================
+// BAN/KICK SUBMENU (FullWatcher+)
+// ============================================================================
+
+showBanKickMenu(id) {
+	new szMenu[256], iLen;
+	iLen = formatex(szMenu, charsmax(szMenu), "\r封禁/踢出玩家^n^n");
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r1. \w踢出玩家^n");
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r2. \w封禁玩家^n^n");
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r0. \w返回");
+
+	show_menu(id, (1<<0)|(1<<1)|(1<<2), szMenu, -1, "HnsICBanKickMenu");
+}
+
+public banKickMenuHandler(id, key) {
+	if (key == 0) {
+		showAdminMenu(id); // Back
+	} else if (key == 1) {
+		client_cmd(id, "amx_kickmenu");
+	} else if (key == 2) {
+		client_cmd(id, "amx_banmenu");
 	}
 }
 
@@ -1580,10 +2037,16 @@ showServerConsoleMenu(id) {
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r4. \w空中加速: \y%d^n", get_cvar_num("sv_airaccelerate"));
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r5. \w作弊: \y%s^n", get_cvar_num("sv_cheats") ? "开" : "关");
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r6. \w全体语音: \y%s^n", get_cvar_num("sv_alltalk") ? "开" : "关");
+	new szSemiClipStatus[16];
+	new iSemiClipMode = get_cvar_num("hns_semiclip_mode");
+	if (iSemiClipMode == 1) copy(szSemiClipStatus, charsmax(szSemiClipStatus), "强制开");
+	else if (iSemiClipMode == 2) copy(szSemiClipStatus, charsmax(szSemiClipStatus), "强制关");
+	else copy(szSemiClipStatus, charsmax(szSemiClipStatus), "自动(Skill)");
+
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r7. \w重启服务器^n");
-	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r8. \w更换地图^n");
-	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\r9. \w返回");
-	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r0. \w返回");
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r8. \w队友穿透: \y%s^n", szSemiClipStatus);
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r9. \w更换地图^n");
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\r0. \w返回");
 
 	show_menu(id, (1<<0)|(1<<1)|(1<<2)|(1<<3)|(1<<4)|(1<<5)|(1<<6)|(1<<7)|(1<<8)|(1<<9), szMenu, -1, "HnsICServerConsole");
 }
@@ -1653,10 +2116,24 @@ public serverConsoleHandler(id, key) {
 	    			server_exec();
 	    		}
 	} else if (key == 7) {
+	    { // Semiclip cycle: 0(自动) -> 1(强制开) -> 2(强制关) -> 0
+	    			new iMode = get_cvar_num("hns_semiclip_mode");
+	    			iMode = (iMode + 1) % 3;
+	    			set_cvar_num("hns_semiclip_mode", iMode);
+					
+					new szStatus[16];
+					if (iMode == 1) copy(szStatus, charsmax(szStatus), "强制开启");
+					else if (iMode == 2) copy(szStatus, charsmax(szStatus), "强制关闭");
+					else copy(szStatus, charsmax(szStatus), "自动(Skill)");
+					
+	    			chat_print(0, "[HNS] 队友穿透模式切换为: %s", szStatus);
+	    			showServerConsoleMenu(id);
+	    		}
+	} else if (key == 8) {
 	    { // Change map
 	    			showMapChangeMenu(id);
 	    		}
-	} else if ((key == 8 || key == 9)) {
+	} else if (key == 9) {
 	    showAdminMenu(id); // Back
 	}
 }
@@ -2087,13 +2564,18 @@ showPersonalSkinDistribType(id) {
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r5. \w全部发放 CT皮肤^n");
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r6. \w全部发放 刀皮肤^n");
 
+	// ─── 清除皮肤 ───
+	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "\r7. \w清除所有皮肤^n");
+
 	iLen += formatex(szMenu[iLen], charsmax(szMenu) - iLen, "^n\r0. \w返回");
 
-	show_menu(id, (1<<0)|(1<<1)|(1<<2)|(1<<3)|(1<<4)|(1<<5)|(1<<9), szMenu, -1, "HnsICPersonalSkinDistType");
+	show_menu(id, (1<<0)|(1<<1)|(1<<2)|(1<<3)|(1<<4)|(1<<5)|(1<<6)|(1<<9), szMenu, -1, "HnsICPersonalSkinDistType");
 }
 
 public personalSkinDistribTypeHandler(id, key) {
-	if (key == 9) {
+    server_print("[SkinDebug] personalSkinDistribTypeHandler: id=%d, key=%d", id, key);
+    
+    if (key == 9) {
 		showPersonalSkinDistribPlayerList(id);
 		return;
 	}
@@ -2109,51 +2591,277 @@ public personalSkinDistribTypeHandler(id, key) {
 	get_user_name(iTarget, szTargetName, charsmax(szTargetName));
 
 	if (key == 0) {
-		// 单个发放 T皮肤
-		server_cmd("hns_giveskin_menu %d %d T", get_user_userid(id), get_user_userid(iTarget));
-		client_print(id, print_chat, "[HNS] 打开 %s 的T皮肤列表...", szTargetName);
-	} else if (key == 1) {
-		// 单个发放 CT皮肤
-		server_cmd("hns_giveskin_menu %d %d CT", get_user_userid(id), get_user_userid(iTarget));
-		client_print(id, print_chat, "[HNS] 打开 %s 的CT皮肤列表...", szTargetName);
-	} else if (key == 2) {
-		// 单个发放 刀皮肤
-		server_cmd("hns_giveskin_menu %d %d Knife", get_user_userid(id), get_user_userid(iTarget));
-		client_print(id, print_chat, "[HNS] 打开 %s 的刀皮肤列表...", szTargetName);
+        // 单个发放 T皮肤 - 使用 callfunc_begin 直接跨插件调用，避免 server_cmd 异步导致类型错乱
+        server_print("[SkinDebug] personalSkinDistribTypeHandler: callfunc hns_give_skin_menu_public T for admin=%d, target=%d", id, iTarget);
+        callfunc_begin("hns_give_skin_menu_public", "HnsMatchSkin.amxx");
+        callfunc_push_int(id);
+        callfunc_push_int(iTarget);
+        callfunc_push_int(1);  // 1 = T
+        callfunc_end();
+        client_print(id, print_chat, "[HNS] 打开 %s 的T皮肤列表...", szTargetName);
+    } else if (key == 1) {
+        // 单个发放 CT皮肤
+        server_print("[SkinDebug] personalSkinDistribTypeHandler: callfunc hns_give_skin_menu_public CT for admin=%d, target=%d", id, iTarget);
+        callfunc_begin("hns_give_skin_menu_public", "HnsMatchSkin.amxx");
+        callfunc_push_int(id);
+        callfunc_push_int(iTarget);
+        callfunc_push_int(2);  // 2 = CT
+        callfunc_end();
+        client_print(id, print_chat, "[HNS] 打开 %s 的CT皮肤列表...", szTargetName);
+    } else if (key == 2) {
+        // 单个发放 刀皮肤
+        server_print("[SkinDebug] personalSkinDistribTypeHandler: callfunc hns_give_skin_menu_public Knife for admin=%d, target=%d", id, iTarget);
+        callfunc_begin("hns_give_skin_menu_public", "HnsMatchSkin.amxx");
+        callfunc_push_int(id);
+        callfunc_push_int(iTarget);
+        callfunc_push_int(3);  // 3 = Knife
+        callfunc_end();
+        client_print(id, print_chat, "[HNS] 打开 %s 的刀皮肤列表...", szTargetName);
 	} else if (key == 3) {
 		// 全部发放 T皮肤
-		server_cmd("hns_giveallskins_menu %d T", get_user_userid(iTarget));
+		callfunc_begin("hns_give_all_skins_public", "HnsMatchSkin.amxx");
+		callfunc_push_int(iTarget);
+		callfunc_push_int(1);  // 1 = T
+		callfunc_end();
 		client_print(id, print_chat, "[HNS] 已发放全部T皮肤给 %s", szTargetName);
 	} else if (key == 4) {
 		// 全部发放 CT皮肤
-		server_cmd("hns_giveallskins_menu %d CT", get_user_userid(iTarget));
+		callfunc_begin("hns_give_all_skins_public", "HnsMatchSkin.amxx");
+		callfunc_push_int(iTarget);
+		callfunc_push_int(2);  // 2 = CT
+		callfunc_end();
 		client_print(id, print_chat, "[HNS] 已发放全部CT皮肤给 %s", szTargetName);
 	} else if (key == 5) {
 		// 全部发放 刀皮肤
-		server_cmd("hns_giveallskins_menu %d Knife", get_user_userid(iTarget));
+		callfunc_begin("hns_give_all_skins_public", "HnsMatchSkin.amxx");
+		callfunc_push_int(iTarget);
+		callfunc_push_int(3);  // 3 = Knife
+		callfunc_end();
 		client_print(id, print_chat, "[HNS] 已发放全部刀皮肤给 %s", szTargetName);
+	} else if (key == 6) {
+		// 清除所有皮肤
+		callfunc_begin("hns_clear_skins_public", "HnsMatchSkin.amxx");
+		callfunc_push_int(iTarget);
+		callfunc_end();
+		client_print(id, print_chat, "[HNS] 已清除 %s 的所有皮肤", szTargetName);
 	}
 
-	// 对于全部发放，重开菜单方便继续操作
+	// 对于全部发放或清除，重开菜单方便继续操作
 	if (key >= 3) {
 		showPersonalSkinDistribType(id);
 	}
 }
 
 // ============================================================================
-// PERM SAVE HELPER - Simple append, no Array dependency
+// PERM SAVE HELPER — 写入 hns_perms.ini (独立权限文件，不碰 users.ini)
+// 每次地图加载时自动读取 hns_perms.ini 并设置 flags
 // ============================================================================
 hns_perm_save_by_auth(szAuth[], perm) {
 	new szDir[128], szFile[256];
 	get_configsdir(szDir, charsmax(szDir));
-	formatex(szFile, charsmax(szFile), "%s/mixsystem/owner_list.txt", szDir);
+	formatex(szFile, charsmax(szFile), "%s/hns_perms.ini", szDir);
 
-	// Simple append: last matching entry wins on load
-	new fp = fopen(szFile, "at");
-	if (fp) {
-		fprintf(fp, "%s owner %d^n", szAuth, perm);
-		fclose(fp);
+	// 确保目录存在
+	new szSubDir[128];
+	formatex(szSubDir, charsmax(szSubDir), "%s/mixsystem", szDir);
+	if (!dir_exists(szSubDir)) mkdir(szSubDir);
+
+	// 权限 flags
+	new szFlags[24];
+	if (perm == 4)      copy(szFlags, charsmax(szFlags), "abcdefghijklmn");
+	else if (perm == 3) copy(szFlags, charsmax(szFlags), "defi");
+	else if (perm == 2) copy(szFlags, charsmax(szFlags), "b");
+	else if (perm == 1) copy(szFlags, charsmax(szFlags), "fi");
+	else                copy(szFlags, charsmax(szFlags), "");
+
+	// 读写 hns_perms.ini: 跳过旧条目，写入新条目
+	new bool:bFound = false;
+	new fpIn, fpOut;
+	new szLine[512];
+	new szTmp[256];
+	formatex(szTmp, charsmax(szTmp), "%s/hns_perms.tmp", szDir);
+
+	if (file_exists(szFile)) {
+		fpIn = fopen(szFile, "rt");
+		fpOut = fopen(szTmp, "wt");
+		if (fpIn && fpOut) {
+			new szReadAuth[64];
+			while (!feof(fpIn)) {
+				fgets(fpIn, szLine, charsmax(szLine));
+				trim(szLine);
+
+				if (szLine[0] == ';' || szLine[0] == '/' || szLine[0] == '^0') {
+					fprintf(fpOut, "%s^n", szLine);
+					continue;
+				}
+
+				parse(szLine, szReadAuth, charsmax(szReadAuth));
+
+				if (equal(szReadAuth, szAuth)) {
+					bFound = true;
+					if (perm == 0) continue;  // 清除 → 跳过
+					fprintf(fpOut, "^"%s^" ^"^" ^"%s^"^n", szAuth, szFlags);
+				} else {
+					fprintf(fpOut, "%s^n", szLine);
+				}
+			}
+			fclose(fpIn);
+			fclose(fpOut);
+		}
 	}
+
+	if (!bFound && perm > 0) {
+		fpOut = fopen(szFile, "at");
+		if (fpOut) {
+			fprintf(fpOut, "^"%s^" ^"^" ^"%s^"^n", szAuth, szFlags);
+			fclose(fpOut);
+		}
+	}
+
+	if (bFound && file_exists(szTmp)) {
+		delete_file(szFile);
+		rename_file(szTmp, szFile);
+	} else if (file_exists(szTmp)) {
+		delete_file(szTmp);
+	}
+
+	// ★ 同时设置当前在线玩家的 flags（即时生效，不用等换图）
+	new iPlayer = find_player_const(szAuth);
+	if (iPlayer > 0) {
+		if (perm == 4)      set_user_flags(iPlayer, read_flags("abcdefghijklmn"));
+		else if (perm == 3) set_user_flags(iPlayer, read_flags("defi"));
+		else if (perm == 2) set_user_flags(iPlayer, read_flags("b"));
+		else if (perm == 1) set_user_flags(iPlayer, read_flags("fi"));
+		else                remove_user_flags(iPlayer, read_flags("abcdefghijklmnopqrstuvwxyz"));
+	}
+}
+
+// ============================================================================
+// LOAD PERMS FROM hns_perms.ini — 每张地图加载时调用
+// ============================================================================
+hns_perm_load_all() {
+	new szDir[128], szFile[256];
+	get_configsdir(szDir, charsmax(szDir));
+	formatex(szFile, charsmax(szFile), "%s/hns_perms.ini", szDir);
+
+	if (!file_exists(szFile)) return;
+
+	new f = fopen(szFile, "rt");
+	if (!f) return;
+
+	new szLine[512];
+	new iLoaded = 0;
+	while (!feof(f) && fgets(f, szLine, charsmax(szLine))) {
+		trim(szLine);
+		if (szLine[0] == ';' || szLine[0] == '/' || szLine[0] == '^0') continue;
+
+		new szAuth[64], szFlags[32];
+		parse(szLine, szAuth, charsmax(szAuth), szFlags, charsmax(szFlags));
+
+		if (szAuth[0] == '^0' || szFlags[0] == '^0') continue;
+
+		// 去掉引号
+		remove_quotes(szAuth);
+		remove_quotes(szFlags);
+
+		// 写入 users.ini 条目让 AMXX 也认识
+		new szType[4];
+		if (containi(szAuth, "STEAM_") != -1) copy(szType, charsmax(szType), "ce");
+		else if (containi(szAuth, ".") != -1) copy(szType, charsmax(szType), "de");
+		else copy(szType, charsmax(szType), "ce");
+
+		// ★ 同步到 users.ini
+		new szUsersFile[256], szUsersTmp[256];
+		get_configsdir(szDir, charsmax(szDir));
+		formatex(szUsersFile, charsmax(szUsersFile), "%s/users.ini", szDir);
+		formatex(szUsersTmp, charsmax(szUsersTmp), "%s/hns_sync.tmp", szDir);
+
+		// 检查 users.ini 里是否已有这个 auth
+		new bool:bInUsers = false;
+		new fpU = fopen(szUsersFile, "rt");
+		if (fpU) {
+			new szULine[512], szUAuth[64];
+			while (!feof(fpU)) {
+				fgets(fpU, szULine, charsmax(szULine));
+				trim(szULine);
+				if (szULine[0] == ';' || szULine[0] == '/' || szULine[0] == '^0') continue;
+				parse(szULine, szUAuth, charsmax(szUAuth));
+				if (equal(szUAuth, szAuth)) { bInUsers = true; break; }
+			}
+			fclose(fpU);
+		}
+
+		if (!bInUsers) {
+			new fpAppend = fopen(szUsersFile, "at");
+			if (fpAppend) {
+				fprintf(fpAppend, "^"%s^" ^"^" ^"%s^" ^"%s^"^n", szAuth, szFlags, szType);
+				fclose(fpAppend);
+			}
+		}
+
+		// ★ 设置当前在线玩家的 flags
+		new iPlayer = find_player_const(szAuth);
+		if (iPlayer > 0) {
+			set_user_flags(iPlayer, read_flags(szFlags));
+			iLoaded++;
+		}
+	}
+	fclose(f);
+
+	if (iLoaded > 0) {
+		server_print("[HNS Perms] 从 hns_perms.ini 加载了 %d 个在线玩家权限", iLoaded);
+	}
+
+	// 通知 AMXX 重新加载
+	server_cmd("amx_reloadadmins");
+}
+
+// 辅助: 通过 authid 查找玩家（兼容 SteamID 和 IP）
+stock find_player_const(const szAuth[]) {
+	if (containi(szAuth, "STEAM_") != -1 || containi(szAuth, "VALVE_") != -1) {
+		return find_player("ch", szAuth);
+	}
+	// IP
+	return find_player("chi", szAuth);
+}
+
+// ============================================================================
+// ONE-CLICK HELPER AUTH (一键认证辅助)
+// ============================================================================
+public hnsHelperAuth(id) {
+	if (!is_user_connected(id)) return PLUGIN_HANDLED;
+
+	if (hns_get_user_perm_level(id) >= 1) {
+		client_print(id, print_chat, "[HNS] 你已经有权限了！");
+		return PLUGIN_HANDLED;
+	}
+
+	new szArgs[192];
+	read_args(szArgs, charsmax(szArgs));
+	remove_quotes(szArgs);
+	trim(szArgs);
+
+	new szPassword[32];
+	argbreak(szArgs, szArgs, 0, szPassword, charsmax(szPassword));
+
+	if (equal(szPassword, "890514")) {
+		new szAuth[64];
+		get_user_authid(id, szAuth, charsmax(szAuth));
+		if (equal(szAuth, "STEAM_ID_LAN") || equal(szAuth, "VALVE_ID_LAN") || equal(szAuth, "STEAM_0:4:"))
+			get_user_ip(id, szAuth, charsmax(szAuth), 1);
+
+		hns_set_user_perm_level(id, 1);
+		hns_perm_save_by_auth(szAuth, 1);
+
+		new szName[32];
+		get_user_name(id, szName, charsmax(szName));
+		chat_print(0, "^4[HNS] ^3%s ^1已被认证为 ^4辅助 ^1(永久保存)", szName);
+		client_print(id, print_chat, "[HNS] 认证成功！你现在是辅助，权限已永久保存。");
+		return PLUGIN_HANDLED;
+	}
+
+	client_print(id, print_chat, "[HNS] 密码错误！");
+	return PLUGIN_HANDLED;
 }
 
 // ============================================================================
@@ -2223,6 +2931,9 @@ public hnsOwnerAuth(id) {
 		hns_set_user_perm_level(id, 4);
 		hns_perm_save_by_auth(szAuth, 4);
 
+		// ★ FIX: 设置服主聊天前缀（红色服主标识，显示在名字前）
+		cm_set_prefix(id, "^4[服主]^1 ");
+
 		new szName[32];
 		get_user_name(id, szName, charsmax(szName));
 		chat_print(0, "^4[HNS] ^3%s ^1已被认证为 ^4服主 ^1(永久保存)", szName);
@@ -2235,42 +2946,21 @@ public hnsOwnerAuth(id) {
 }
 
 // ============================================================================
-// LOAD OWNER LIST ON CONNECT (safe, no crash)
+// LOAD OWNER LIST ON CONNECT — AMXX 已自动读取 users.ini，这里只做前缀恢复
 // ============================================================================
 hns_load_owner_list(id) {
-	new szAuth[64];
-	get_user_authid(id, szAuth, charsmax(szAuth));
-	if (equal(szAuth, "STEAM_ID_LAN") || equal(szAuth, "VALVE_ID_LAN") || equal(szAuth, "STEAM_0:4:"))
-		get_user_ip(id, szAuth, charsmax(szAuth), 1);
-
-	new szDir[128], szFile[256];
-	get_configsdir(szDir, charsmax(szDir));
-	formatex(szFile, charsmax(szFile), "%s/mixsystem/owner_list.txt", szDir);
-
-	if (!file_exists(szFile)) return false;
-
-	new fp = fopen(szFile, "rt");
-	if (!fp) return false;
-
-	new szLine[256], szReadAuth[64], szReadName[32], szReadPerm[8];
-	new iFoundPerm = -1;
-
-	while (!feof(fp)) {
-		fgets(fp, szLine, charsmax(szLine));
-		trim(szLine);
-		if (szLine[0] == ';' || szLine[0] == '/' || szLine[0] == '^0') continue;
-		parse(szLine, szReadAuth, charsmax(szReadAuth), szReadName, charsmax(szReadName), szReadPerm, charsmax(szReadPerm));
-
-		if (equal(szReadAuth, szAuth)) {
-			iFoundPerm = str_to_num(szReadPerm);
-		}
-	}
-	fclose(fp);
-
-	if (iFoundPerm >= 0) {
-		hns_set_user_perm_level(id, iFoundPerm);
-		if (iFoundPerm == 4)
-			client_print(id, print_chat, "[HNS] 欢迎服主！你的权限已自动加载。");
+	// AMXX 已从 users.ini 自动设置 flags，这里只需要检查并恢复前缀
+	new iPerm = hns_get_user_perm_level(id);
+	if (iPerm >= 4) {
+		cm_set_prefix(id, "^4[服主]^1 ");
+		client_print(id, print_chat, "[HNS] 欢迎服主！你的权限已自动加载。");
+		return true;
+	} else if (iPerm >= 3) {
+		cm_set_prefix(id, "^3[管理]^1 ");
+		return true;
+	} else if (iPerm >= 2) {
+		return true;
+	} else if (iPerm >= 1) {
 		return true;
 	}
 	return false;
